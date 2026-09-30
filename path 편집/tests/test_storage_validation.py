@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from pac_path_editor.core import Config, PathData, apply_corrections, build_drag_candidate, generate_paths, interpolate_at_xi
-from pac_path_editor.storage import load_config, load_session, save_session
+from pac_path_editor.storage import load_config, load_session, migrate_v1_session, save_session
 from pac_path_editor.validation import MockRobotValidator, ROBOT_KINDS, ValidationReport, retime_path, validate_paths
 
 
@@ -49,6 +49,20 @@ def test_never_shorten_and_opt_in_shortening():
     assert retime_path(path, config).times[-1] >= path.times[-1]
     config.never_shorten = False
     assert retime_path(path, config).times[-1] < 20
+
+
+def test_never_shorten_scales_from_immutable_original_length_without_compounding():
+    config = Config(sample_dt=.01, max_ee_speed=100.)
+    original = generate_paths(config)['outbound']
+    longer = original.copy()
+    longer.points[len(longer.points)//2, 1] += .3
+    longer.timing_length = longer.length
+    expected = config.initial_duration * max(1., longer.length / original.length)
+    first = retime_path(longer, config)
+    second = retime_path(first, config)
+    assert first.times[-1] >= expected
+    assert first.times[-1] < expected + config.sample_dt + 1e-12
+    assert second.times[-1] == first.times[-1]
 
 
 def test_retime_duplicate_geometry_segments_remains_finite():
@@ -126,6 +140,19 @@ def test_session_round_trip_preserves_geometry_and_has_no_double_application(edi
     assert data["units"] == {"length": "m", "time": "s"}
 
 
+def test_virtual_frame_round_trip_is_explicit_and_robot_frame_conflict_is_rejected(edited, tmp_path):
+    config, originals, records, _, _ = edited
+    config.frame = 'virtual_edit_frame'
+    paths = apply_corrections(originals, records, config)
+    report = validate_paths(originals, paths, records, config, revision=9, last_change=.08)
+    destination = tmp_path / 'virtual.json'
+    save_session(destination, config, originals, records, report, 9)
+    loaded = load_session(destination)
+    assert loaded.config.frame == 'virtual_edit_frame'
+    with pytest.raises(ValueError, match='conflicts'):
+        load_session(destination, expected_config=Config(frame='robot_base'))
+
+
 def test_save_rejects_stale_revision_or_mismatched_geometry(edited, tmp_path):
     config, originals, records, _, report = edited
     destination = tmp_path / "session.json"
@@ -159,7 +186,7 @@ def test_load_rejects_invalid_schema_and_invariants(edited, tmp_path, damage):
     save_session(destination, config, originals, records, report, 7)
     data = json.loads(destination.read_text())
     if damage == "version":
-        data["schema_version"] = 2
+        data["schema_version"] = 1
     elif damage == "frame":
         data["frame"] = "camera"
     elif damage == "units":
@@ -183,6 +210,27 @@ def test_load_rejects_invalid_schema_and_invariants(edited, tmp_path, damage):
     destination.write_text(json.dumps(data))
     with pytest.raises(ValueError):
         load_session(destination)
+
+
+def test_explicit_v1_migration_preserves_geometry(edited, tmp_path):
+    config, originals, records, paths, report = edited
+    current, legacy, migrated = (tmp_path / name for name in ('current.json', 'legacy.json', 'migrated.json'))
+    save_session(current, config, originals, records, report, 7)
+    data = json.loads(current.read_text())
+    data["schema_version"] = 1
+    data["config"].pop("frame")
+    for path in list(data["originals"].values()) + list(data["report"]["executions"].values()):
+        path.pop("reference_length")
+        path.pop("reference_duration")
+        path.pop("timing_length")
+    for record in data["records"]:
+        record.pop("profile_residual")
+    legacy.write_text(json.dumps(data))
+    migrate_v1_session(legacy, migrated)
+    loaded = load_session(migrated)
+    reproduced = apply_corrections(loaded.originals, loaded.records, loaded.config)
+    for name in paths:
+        np.testing.assert_allclose(reproduced[name].points, paths[name].points)
 
 
 def test_load_config_rejects_nonfinite_duplicate_or_unknown_values(tmp_path):

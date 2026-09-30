@@ -1,4 +1,4 @@
-"""Strict, atomic JSON persistence for prototype edits in robot-base SI units."""
+"""Strict atomic persistence with explicit robot_base/virtual frame metadata."""
 
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ from .core import Config, Correction, PATH_IDS, PathData, apply_corrections, arc
 from .validation import ROBOT_KINDS, ValidationReport, _finite_json, _strict_keys, path_from_dict, path_to_dict, validate_paths
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SESSION_KEYS = {"schema_version", "prototype_only", "frame", "units", "config", "originals", "records", "report", "revision"}
-CORRECTION_KEYS = {"id", "group_id", "center", "delta", "applies_to", "path_id", "center_xi", "source_fingerprint", "weight_xi", "weight_values"}
+CORRECTION_KEYS = {"id", "group_id", "center", "delta", "applies_to", "path_id", "center_xi", "source_fingerprint", "weight_xi", "weight_values", "profile_residual"}
 
 
 @dataclass
@@ -122,6 +122,10 @@ def _read_originals(data: Any, config: Config) -> dict[str, PathData]:
         distance = arc_lengths(path.points)
         if distance[-1] <= 0:
             raise ValueError("Original path must have positive length")
+        if not np.isclose(path.reference_length, path.length, rtol=0, atol=config.numeric_tolerance) or not np.isclose(path.reference_duration, path.times[-1] - path.times[0], rtol=0, atol=config.numeric_tolerance):
+            raise ValueError("Original timing references must match original geometry/time")
+        if not np.isclose(path.timing_length, path.length, rtol=0, atol=config.numeric_tolerance):
+            raise ValueError("Original timing length must match original geometry")
         expected_xi = distance / distance[-1]
         if key == "return":
             expected_xi = 1 - expected_xi
@@ -156,7 +160,7 @@ def _check_report(report: ValidationReport, revision: int, originals: dict[str, 
 def save_session(path: str | Path, config: Config, originals: dict[str, PathData], records: list[Correction], report: ValidationReport, revision: int) -> None:
     """Atomically replace a JSON session after validating its exact revision.
 
-    Only original robot-base positions (m) plus correction memory are persisted
+    Original tagged-frame positions plus correction memory are persisted
     as editable geometry. Execution samples (m/s) live inside the report.
     """
     config.validate()
@@ -165,7 +169,7 @@ def save_session(path: str | Path, config: Config, originals: dict[str, PathData
     checked_records = _read_records([record.to_dict() for record in records])
     checked_report = ValidationReport.from_dict(report.to_dict())
     _check_report(checked_report, revision, checked_originals, checked_records, checked_config)
-    data = {"schema_version": SCHEMA_VERSION, "prototype_only": True, "frame": "robot_base", "units": {"length": "m", "time": "s"}, "config": checked_config.to_dict(), "originals": {key: path_to_dict(value) for key, value in checked_originals.items()}, "records": [record.to_dict() for record in checked_records], "report": checked_report.to_dict(), "revision": revision}
+    data = {"schema_version": SCHEMA_VERSION, "prototype_only": True, "frame": checked_config.frame, "units": {"length": "m", "time": "s"}, "config": checked_config.to_dict(), "originals": {key: path_to_dict(value) for key, value in checked_originals.items()}, "records": [record.to_dict() for record in checked_records], "report": checked_report.to_dict(), "revision": revision}
     payload = json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -187,15 +191,20 @@ def load_session(path: str | Path, expected_config: Config | None = None) -> Sto
     """Load strictly, rejecting schema, unit, configuration and revision conflicts."""
     data = _read_json(path)
     _strict_keys(data, SESSION_KEYS, "session")
-    if type(data["schema_version"]) is not int or data["schema_version"] != SCHEMA_VERSION:
-        raise ValueError("Unsupported session schema_version")
-    if data["prototype_only"] is not True or data["frame"] != "robot_base" or data["units"] != {"length": "m", "time": "s"}:
+    version = data["schema_version"]
+    if type(version) is not int or version != SCHEMA_VERSION:
+        if version == 1:
+            raise ValueError("Schema 1 requires explicit migrate_v1_session(source, destination)")
+        raise ValueError(f"Unsupported session schema_version: {version!r}")
+    if data["prototype_only"] is not True or data["frame"] not in ("robot_base", "virtual_edit_frame") or data["units"] != {"length": "m", "time": "s"}:
         raise ValueError("Unsupported prototype status, coordinate frame or units")
     template = Config().to_dict()
     _strict_keys(data["config"], set(template), "stored configuration")
     for section in ("gate", "camera", "colors"):
         _strict_keys(data["config"][section], set(template[section]), f"stored {section} configuration")
     config = Config.from_dict(data["config"])
+    if data["frame"] != config.frame:
+        raise ValueError("Stored frame conflicts with configuration")
     config.validate()
     if expected_config is not None:
         expected_config.validate()
@@ -207,3 +216,42 @@ def load_session(path: str | Path, expected_config: Config | None = None) -> Sto
     revision = data["revision"]
     _check_report(report, revision, originals, records, config)
     return StoredSession(config, originals, records, report, revision)
+
+
+def migrate_v1_session(source: str | Path, destination: str | Path) -> None:
+    """Explicitly migrate schema 1 robot_base data without changing geometry."""
+    data = _read_json(source)
+    if data.get("schema_version") != 1:
+        raise ValueError("Migration source must use schema_version 1")
+    _strict_keys(data, SESSION_KEYS, "schema 1 session")
+    if data.get("frame") != "robot_base":
+        raise ValueError("Schema 1 migration only supports its robot_base frame")
+    data["schema_version"] = SCHEMA_VERSION
+    data["config"]["frame"] = "robot_base"
+    references = {}
+    for path_id, path in data["originals"].items():
+        points = np.asarray(path["points"], dtype=float)
+        times = np.asarray(path["times"], dtype=float)
+        references[path_id] = (float(arc_lengths(points)[-1]), float(times[-1] - times[0]))
+        path["reference_length"], path["reference_duration"] = references[path_id]
+        path["timing_length"] = references[path_id][0]
+    for record in data["records"]:
+        record["profile_residual"] = [[0.0, 0.0, 0.0] for _ in record["weight_xi"]]
+    for path_id, path in data["report"]["executions"].items():
+        path["reference_length"], path["reference_duration"] = references[path_id]
+        path["timing_length"] = float(arc_lengths(np.asarray(path["points"], dtype=float))[-1])
+    payload = json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=destination.parent,
+                                     prefix=f".{destination.name}.", suffix=".tmp",
+                                     delete=False) as handle:
+        temporary = Path(handle.name)
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    try:
+        load_session(temporary)
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)

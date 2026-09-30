@@ -73,6 +73,16 @@ def test_near_endpoints_request_attenuates_smoothly_and_endpoints_stay_fixed():
         assert 0 < expected < .1
 
 
+@pytest.mark.parametrize("mode", ["outbound", "both"])
+def test_exact_endpoint_core_call_never_changes_memory(mode):
+    config = Config()
+    originals = generate_paths(config)
+    prior = drag(config, originals, [], [0, 0, .08], xi=.2, mode=mode)
+    before = [record.to_dict() for record in prior]
+    result = drag(config, originals, prior, [0, 0, .001], xi=0., mode=mode, group="endpoint")
+    assert [record.to_dict() for record in result] == before
+
+
 def test_norm_input_preserves_direction_and_overlaps_obey_total_limit():
     config = Config(drag_limit=.12, total_offset_limit=.19)
     originals = generate_paths(config)
@@ -236,6 +246,21 @@ def test_zero_drag_is_exact_memory_noop_and_weight_basis_frozen():
     s = arc_lengths(before.points)
     center_s = np.interp(.5, before.xi, s)
     np.testing.assert_allclose(weak[-1].weight_values, local_weights(np.interp(weak[-1].weight_xi, before.xi, s) - center_s, config.influence_length))
+
+
+def test_tiny_second_drag_has_tiny_global_effect_and_preserves_old_shape():
+    config = Config()
+    originals = generate_paths(config)
+    first = drag(config, originals, [], [0, 0, .08])
+    before = apply_corrections(originals, first, config)
+    second = drag(config, originals, first, [0, 0, .000001], group="tiny")
+    after = apply_corrections(originals, second, config)
+    assert max_corresponding_displacement(before, after) <= 1.000001e-6
+    orthogonal = drag(config, originals, first, [0, .01, 0], xi=.55, group="orthogonal")
+    result = apply_corrections(originals, orthogonal, config)
+    for xi in (.35, .45, .65):
+        before_z = interpolate_at_xi(before['outbound'], xi)[2]
+        assert interpolate_at_xi(result['outbound'], xi)[2] == pytest.approx(before_z, abs=2e-14)
 
 
 @pytest.mark.parametrize("change", [

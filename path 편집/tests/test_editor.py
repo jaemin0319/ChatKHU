@@ -296,12 +296,12 @@ def test_small_new_effect_rejected_despite_large_accumulated_offset() -> None:
 def test_endpoint_selection_cannot_create_history_or_move_endpoints() -> None:
     editor = make_editor()
     editor.start_edit()
-    assert editor.begin_drag("outbound", 0, np.zeros(3))
-    editor.update_drag(np.array([0, 0, 0.04]))
-    # Boundary protection fixes the picked endpoint but can move its neighbors.
-    for name, path in editor.paths.items():
-        np.testing.assert_array_equal(path.points[[0, -1]], editor.originals[name].points[[0, -1]])
-    editor.cancel_drag()
+    before = editor.paths
+    memory = record_dicts(editor)
+    assert not editor.begin_drag("outbound", 0, np.zeros(3))
+    assert editor.drag is None
+    assert record_dicts(editor) == memory
+    assert_same_paths(editor.paths, before)
     assert not editor.can_undo
 
 

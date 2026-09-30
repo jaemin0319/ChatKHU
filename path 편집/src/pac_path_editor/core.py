@@ -1,6 +1,6 @@
 """Geometry and correction memory, independent of UI and robot libraries.
 
-All points/vectors are in the robot-base frame, metres; time is in seconds.
+All points/vectors use Config.frame length units; time is in seconds.
 Path arrays are (N, 3), correspondence/time arrays are (N,), vectors are (3,).
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ EditMode = Literal["both", "outbound", "return"]
 
 @dataclass
 class GateConfig:
-    """Spatial reuse radii in base-frame metres; alpha is dimensionless."""
+    """Spatial reuse radii in configured frame length units; alpha is dimensionless."""
 
     mode: str = "anisotropic"
     radius: float = 0.18
@@ -29,7 +29,7 @@ class GateConfig:
 
 @dataclass
 class CameraConfig:
-    """Pinhole camera: pixels for dimensions/focal lengths; base-frame m for pose."""
+    """Matplotlib pinhole camera; pose uses configured frame length units."""
 
     width: int = 1000
     height: int = 700
@@ -74,9 +74,12 @@ class Config:
     gate: GateConfig = field(default_factory=GateConfig)
     camera: CameraConfig = field(default_factory=CameraConfig)
     colors: ColorConfig = field(default_factory=ColorConfig)
+    frame: str = "robot_base"
 
     def validate(self) -> None:
         """Reject invalid/ambiguous settings before creating metre-valued geometry."""
+        if self.frame not in ("robot_base", "virtual_edit_frame"):
+            raise ValueError("frame must be robot_base or virtual_edit_frame")
         positive = ("initial_duration", "sample_dt", "selection_radius_px", "influence_length",
                     "drag_limit", "total_offset_limit", "min_effective_change", "max_ee_speed",
                     "endpoint_protection", "numeric_tolerance", "mouse_depth_scale")
@@ -168,21 +171,31 @@ def _vector(value: object, name: str = "vector") -> np.ndarray:
 
 @dataclass
 class PathData:
-    """Execution-order geometry: points (N,3) in base m, xi (N,), times (N,) s."""
+    """Execution-order geometry: frame points (N,3), xi (N,), times (N,) s."""
 
     path_id: PathId
     points: np.ndarray
     xi: np.ndarray
     times: np.ndarray
+    reference_length: float | None = None
+    reference_duration: float | None = None
+    timing_length: float | None = None
 
     def __post_init__(self) -> None:
         self.points = np.array(self.points, dtype=float, copy=True)
         self.xi = np.array(self.xi, dtype=float, copy=True)
         self.times = np.array(self.times, dtype=float, copy=True)
+        if self.reference_length is None:
+            self.reference_length = self.length
+        if self.reference_duration is None:
+            self.reference_duration = float(self.times[-1] - self.times[0])
+        if self.timing_length is None:
+            self.timing_length = self.length
 
     def copy(self) -> PathData:
         """Copy all mutable arrays; no aliases to the source path."""
-        return PathData(self.path_id, self.points, self.xi, self.times)
+        return PathData(self.path_id, self.points, self.xi, self.times,
+                        self.reference_length, self.reference_duration, self.timing_length)
 
     @property
     def length(self) -> float:
@@ -200,7 +213,7 @@ class PathData:
 
 @dataclass
 class Correction:
-    """Frozen local raw field. Vectors in base m, weights indexed by original xi.
+    """Frozen local raw field. Frame vectors, weights indexed by original xi.
 
     delta is a residual field coefficient, NOT a gesture displacement limit.
     A record can exceed drag_limit to cancel retained unsaturated contributions.
@@ -216,15 +229,21 @@ class Correction:
     source_fingerprint: str
     weight_xi: np.ndarray
     weight_values: np.ndarray
+    # A vector-valued remainder preserves absorbed shapes/directions exactly.
+    # Boundary attenuation is frozen at weight_xi before linear interpolation.
+    profile_residual: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         self.center = np.array(self.center, dtype=float, copy=True)
         self.delta = np.array(self.delta, dtype=float, copy=True)
         self.weight_xi = np.array(self.weight_xi, dtype=float, copy=True)
         self.weight_values = np.array(self.weight_values, dtype=float, copy=True)
+        self.profile_residual = (np.zeros((len(self.weight_xi), 3))
+                                 if self.profile_residual is None else
+                                 np.array(self.profile_residual, dtype=float, copy=True))
 
     def copy(self) -> Correction:
-        """Return independent record arrays (base-frame m and dimensionless xi)."""
+        """Return independent record arrays in configured frame units."""
         return Correction(**{**self.__dict__})
 
     def to_dict(self) -> dict:
@@ -260,11 +279,13 @@ class Correction:
             raise ValueError("Invalid correction weight profile")
         if not np.isclose(np.interp(record.center_xi, wx, wv), 1., rtol=0, atol=1e-12):
             raise ValueError("Correction weight at center must be one")
+        if record.profile_residual.shape != (len(wx), 3) or not np.isfinite(record.profile_residual).all():
+            raise ValueError("Invalid vector profile_residual")
         return record
 
 
 def arc_lengths(points: np.ndarray) -> np.ndarray:
-    """Return cumulative polyline arclength (N,) m from base-frame points (N,3)."""
+    """Return cumulative polyline arclength (N,) from configured-frame points."""
     p = np.asarray(points, dtype=float)
     if p.ndim != 2 or p.shape[1] != 3 or len(p) < 1 or not np.isfinite(p).all():
         raise ValueError("points must be a finite (N,3) array")
@@ -278,7 +299,7 @@ def min_jerk(u: np.ndarray | float) -> np.ndarray:
 
 
 def generate_paths(config: Config, demo: str = "straight") -> dict[str, PathData]:
-    """Create independent round-trip paths, base-frame m, uniformly timed in s.
+    """Create independent round-trip paths in Config.frame, uniformly timed in s.
 
     'bump' raises only outbound by bump_height m. xi is initial normalized
     arclength in base->target direction, NOT the min-jerk time progress.
@@ -314,7 +335,7 @@ def _interp(values: np.ndarray, xi: np.ndarray, query: np.ndarray | float) -> np
 
 
 def interpolate_at_xi(path: PathData, xi: np.ndarray | float) -> np.ndarray:
-    """Interpolate base m at immutable xi; scalar -> (3,), array (...,) -> (...,3)."""
+    """Interpolate configured-frame coordinates at immutable xi."""
     query = np.asarray(xi, dtype=float)
     if not np.isfinite(query).all() or np.any(query < 0) or np.any(query > 1):
         raise ValueError("xi must be finite and in [0,1]")
@@ -358,7 +379,7 @@ def _gate_radii(gate: GateConfig) -> np.ndarray:
 def spatial_gate(points: np.ndarray, center: np.ndarray, gate: GateConfig) -> float:
     """Cosine spatial reuse gate from minimum point/segment distance in scaled XYZ.
 
-    Input is a base-frame (N,3) polyline and (3,) centre in m. Anisotropic
+    Input is a configured-frame (N,3) polyline and (3,) centre. Anisotropic
     distance uses ellipsoid radii; every segment is minimized analytically.
     """
     p = np.asarray(points, dtype=float)
@@ -396,7 +417,7 @@ def record_gain(record: Correction, original: PathData, config: Config) -> float
 
 def raw_field(original: PathData, records: list[Correction], config: Config,
               xi: np.ndarray | float | None = None) -> np.ndarray:
-    """Unsaturated sum of raw correction contributions in base m, shape (...,3)."""
+    """Unsaturated sum of frame-local correction contributions, shape (...,3)."""
     query = original.xi if xi is None else np.asarray(xi, dtype=float)
     result = np.zeros(np.shape(query) + (3,), dtype=float)
     for record in records:
@@ -404,17 +425,36 @@ def raw_field(original: PathData, records: list[Correction], config: Config,
             continue
         gamma = record_gain(record, original, config)
         weights = np.interp(query, record.weight_xi, record.weight_values)
-        result += gamma * np.asarray(weights)[..., None] * record.delta
+        result += gamma * (np.asarray(weights)[..., None] * record.delta +
+                           _interp(record.profile_residual, record.weight_xi, query))
+    return result
+
+
+def visible_field(original: PathData, records: list[Correction], config: Config,
+                  xi: np.ndarray | float) -> np.ndarray:
+    """Sum frozen, boundary-weighted vector polylines before total saturation.
+
+    Freezing each component's knots avoids changing a displayed polyline merely
+    by adding another correspondence knot. The new gesture is attenuated with
+    the same smooth endpoint weight as before; stored shapes are not refitted.
+    """
+    result = np.zeros(np.shape(xi) + (3,))
+    for record in records:
+        if record.path_id != original.path_id:
+            continue
+        values = record.weight_values[:, None] * record.delta + record.profile_residual
+        values = values * boundary_weights(record.weight_xi, original.length,
+                                           config.endpoint_protection)[:, None]
+        result += record_gain(record, original, config) * _interp(values, record.weight_xi, xi)
     return result
 
 
 def evaluate_path(original: PathData, records: list[Correction], config: Config,
                   xi: np.ndarray | float | None = None) -> np.ndarray:
-    """Reconstruct points in base m: original + boundary * saturation(raw field)."""
+    """Reconstruct configured-frame points from original plus correction field."""
     query = original.xi if xi is None else np.asarray(xi, dtype=float)
     base = original.points.copy() if xi is None else interpolate_at_xi(original, query)
-    boundary = boundary_weights(query, original.length, config.endpoint_protection)
-    return base + boundary[..., None] * clip_norm(raw_field(original, records, config, query), config.total_offset_limit)
+    return base + clip_norm(visible_field(original, records, config, query), config.total_offset_limit)
 
 
 def apply_corrections(originals: dict[str, PathData], records: list[Correction],
@@ -431,7 +471,8 @@ def apply_corrections(originals: dict[str, PathData], records: list[Correction],
         if path.xi[0] > path.xi[-1]:
             query = query[::-1]
         result[key] = PathData(key, evaluate_path(path, records, config, query), query,
-                               _interp(path.times, path.xi, query))
+                               _interp(path.times, path.xi, query),
+                               path.reference_length, path.reference_duration)
     return result
 
 
@@ -460,7 +501,7 @@ def build_drag_candidate(originals: dict[str, PathData], records: list[Correctio
     if not _finite_scalar(center_xi) or not 0 <= center_xi <= 1:
         raise ValueError("center_xi must be in [0,1]")
     drag = clip_norm(_vector(requested_delta, "drag delta"), config.drag_limit)
-    if np.linalg.norm(drag) <= config.numeric_tolerance:
+    if center_xi in (0., 1.) or not np.any(drag):
         return copy_records(records)
     current = apply_corrections(originals, records, config)
     candidate = copy_records(records)
@@ -469,20 +510,9 @@ def build_drag_candidate(originals: dict[str, PathData], records: list[Correctio
         # Corresponding centres are evaluated on the shown, piecewise-linear
         # geometry; this is the actual selected point, never the hand position.
         center = interpolate_at_xi(current[path_id], center_xi)
-        raw_all = raw_field(original, records, config, center_xi)
         keep = [record for record in candidate if not (
             record.path_id == path_id and record.applies_to == mode and
             spatial_gate(center[None, :], record.center, config.gate) > 0.)]
-        raw_keep = raw_field(original, keep, config, center_xi)
-        boundary = float(boundary_weights(center_xi, original.length, config.endpoint_protection))
-        # Both's secondary centre may lie between geometry knots. Use the
-        # current visible offset so its existing shape is retained exactly
-        # at that correspondence position, then include this xi in the output.
-        visible_field = ((center - interpolate_at_xi(original, center_xi)) / boundary
-                         if boundary > config.numeric_tolerance else raw_all)
-        target_raw = clip_norm(clip_norm(visible_field, config.total_offset_limit) + drag,
-                               config.total_offset_limit)
-        residual = target_raw - raw_keep
         path = current[path_id]
         lengths = arc_lengths(path.points)
         center_length = _interp(lengths, path.xi, center_xi)
@@ -492,10 +522,20 @@ def build_drag_candidate(originals: dict[str, PathData], records: list[Correctio
         profile_xi = np.unique(np.concatenate((path.xi, [center_xi], support_xi)))
         profile_lengths = _interp(lengths, path.xi, profile_xi)
         weights = local_weights(np.abs(profile_lengths - center_length), config.influence_length)
+        boundary = boundary_weights(profile_xi, original.length, config.endpoint_protection)
+        before_offset = (interpolate_at_xi(path, profile_xi) -
+                         interpolate_at_xi(original, profile_xi))
+        desired = clip_norm(before_offset + (boundary * weights)[:, None] * drag,
+                            config.total_offset_limit)
+        remainder = desired - visible_field(original, keep, config, profile_xi)
+        coefficients = np.divide(remainder, boundary[:, None],
+                                 out=np.zeros_like(remainder), where=boundary[:, None] > 0)
+        residual = _interp(coefficients, profile_xi, center_xi)
         keep.append(Correction(
             id=f"{group_id}:{path_id}", group_id=group_id, center=center, delta=residual,
             applies_to=mode, path_id=path_id, center_xi=float(center_xi),
             source_fingerprint=original.fingerprint, weight_xi=profile_xi, weight_values=weights,
+            profile_residual=coefficients - weights[:, None] * residual,
         ))
         candidate = keep
     return candidate

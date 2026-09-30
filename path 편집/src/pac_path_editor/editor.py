@@ -1,7 +1,7 @@
-"""Editing transactions for robot-base paths, without any GUI dependency.
+"""Editing transactions for explicitly tagged edit-frame paths.
 
 All positions and displacements are three-component vectors in metres in the
-robot base frame.  ``xi`` is the immutable original-path correspondence, with
+configured edit frame. ``xi`` is the immutable original-path correspondence, with
 base at zero and target at one; it is never a time fraction.
 """
 
@@ -35,7 +35,7 @@ def _copy_paths(paths: dict[str, PathData]) -> dict[str, PathData]:
 
 
 def _position(value: Any) -> np.ndarray | None:
-    """Return an independent finite robot-base vector, shape (3,), in m."""
+    """Return an independent finite edit-frame vector with shape (3,)."""
     try:
         result = np.asarray(value, dtype=float)
     except (TypeError, ValueError, OverflowError):
@@ -47,7 +47,7 @@ def _position(value: Any) -> np.ndarray | None:
 
 @dataclass
 class DragState:
-    """Frozen gesture reference plus live preview, in robot-base metres.
+    """Frozen gesture reference plus live preview in configured frame units.
 
     ``centers`` holds shape (3,) points on each target path, never hand points.
     ``start_hand``, ``requested_delta`` and ``applied_delta`` have shape (3,).
@@ -77,7 +77,7 @@ class Editor:
     """Manage committed, editable and gesture-preview correction memories.
 
     ``originals`` contains independent ``PathData`` objects with positions of
-    shape (N, 3) in base-frame m, immutable correspondence xi of shape (N,),
+    shape (N, 3) in the configured frame, immutable correspondence xi of shape (N,),
     and time samples of shape (N,) in s. Inputs are copied on construction.
     Path accessors also return independent evaluated arrays.
     """
@@ -112,7 +112,7 @@ class Editor:
 
     @property
     def paths(self) -> dict[str, PathData]:
-        """Current displayed geometry, independent arrays (N, 3) in base m."""
+        """Current displayed geometry as independent configured-frame arrays."""
         if self.drag is not None:
             records = self.drag.candidate_records
         elif self.editing:
@@ -123,7 +123,7 @@ class Editor:
 
     @property
     def committed_paths(self) -> dict[str, PathData]:
-        """Return the committed geometry as independent base-frame arrays."""
+        """Return committed geometry as independent configured-frame arrays."""
         return apply_corrections(self.originals, self.committed_records, self.config)
 
     @property
@@ -181,7 +181,7 @@ class Editor:
     def begin_drag(
         self, path_id: str, xi: float, hand_position: np.ndarray
     ) -> bool:
-        """Lock an already screen-picked path/xi and finite hand (3,) in base m.
+        """Lock a screen-picked path/xi and finite control position (3,).
 
         Screen selection belongs to the input adapter. In both mode the second
         center is interpolated at this same original xi without another pick.
@@ -198,6 +198,9 @@ class Editor:
             center_xi = float("nan")
         if hand is None or not np.isfinite(center_xi) or not 0 <= center_xi <= 1:
             self.last_message = "A finite 3D hand position and valid path point are required."
+            return False
+        if center_xi in (0., 1.):
+            self.last_message = "Exact endpoints are fixed; select a nearby interior point."
             return False
         before = self.paths
         targets = PATH_IDS if self.mode == "both" else (path_id,)
@@ -217,7 +220,7 @@ class Editor:
         return True
 
     def update_drag(self, hand_position: np.ndarray | None) -> bool:
-        """Preview total hand displacement from gesture start, in base-frame m.
+        """Preview total input displacement from gesture start in frame units.
 
         Missing depth, nonfinite values and wrong shapes freeze the last valid
         preview. Releasing then retains that last valid preview; cancellation
@@ -397,13 +400,14 @@ class Editor:
     def execute_command(self, name: str, **kwargs: Any) -> bool | ValidationReport | None:
         """Shared typed actions for buttons, keys and future voice/hand adapters.
 
-        Drag arguments are robot-base metre vectors (3,), never screen pixels.
+        Drag arguments are configured-frame vectors (3,), never screen pixels.
         Unknown names and invalid argument names raise rather than silently
         turning into different commands.
         """
         commands = {
             "start_edit": self.start_edit,
             "set_edit_mode": self.set_edit_mode,
+            "select_mode": self.select_mode,
             "finish_edit": self.finish_edit,
             "cancel_edit": self.cancel_edit,
             "undo": self.undo,
@@ -417,3 +421,9 @@ class Editor:
         if name not in commands:
             raise ValueError(f"Unknown editor command: {name}")
         return commands[name](**kwargs)
+
+    def select_mode(self, mode: EditMode) -> bool:
+        """Voice/keyboard selection starts editing if idle, otherwise switches target."""
+        if not self.set_edit_mode(mode):
+            return False
+        return True if self.editing else self.start_edit()

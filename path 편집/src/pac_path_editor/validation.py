@@ -1,4 +1,4 @@
-"""Geometry checks and time sampling in the robot-base frame (metres/seconds)."""
+"""Geometry checks and time sampling in the explicitly configured edit frame."""
 
 from __future__ import annotations
 
@@ -40,23 +40,28 @@ def _finite_json(value: Any) -> None:
 
 
 def path_to_dict(path: PathData) -> dict[str, Any]:
-    """Serialize a robot-base path: points (N,3) m, xi (N,), times (N,) s."""
-    return {"path_id": path.path_id, "points": path.points.tolist(), "xi": path.xi.tolist(), "times": path.times.tolist()}
+    """Serialize a tagged-frame path: points (N,3), xi (N,), times (N,) s."""
+    return {"path_id": path.path_id, "points": path.points.tolist(), "xi": path.xi.tolist(), "times": path.times.tolist(),
+            "reference_length": path.reference_length, "reference_duration": path.reference_duration,
+            "timing_length": path.timing_length}
 
 
 def path_from_dict(data: dict[str, Any]) -> PathData:
-    """Read a strictly shaped, finite robot-base path; preserve original xi."""
-    _strict_keys(data, {"path_id", "points", "xi", "times"}, "path")
+    """Read a strictly shaped finite path while preserving original xi."""
+    _strict_keys(data, {"path_id", "points", "xi", "times", "reference_length", "reference_duration", "timing_length"}, "path")
     _finite_json(data)
     if data["path_id"] not in PATH_IDS:
         raise ValueError("Invalid path_id")
     try:
-        path = PathData(data["path_id"], np.asarray(data["points"], dtype=float), np.asarray(data["xi"], dtype=float), np.asarray(data["times"], dtype=float))
+        path = PathData(data["path_id"], np.asarray(data["points"], dtype=float), np.asarray(data["xi"], dtype=float), np.asarray(data["times"], dtype=float), data["reference_length"], data["reference_duration"], data["timing_length"])
     except (TypeError, ValueError) as exc:
         raise ValueError("Invalid path arrays") from exc
     error = _path_error(path)
     if error:
         raise ValueError(error)
+    if any(isinstance(data[k], bool) or not isinstance(data[k], (float, int)) or data[k] <= 0
+           for k in ("reference_length", "reference_duration", "timing_length")):
+        raise ValueError("Positive original reference length/duration required")
     if not _xi_valid(path, 1e-8):
         raise ValueError("Path xi must run monotonically between the correct endpoints")
     if np.any(np.diff(path.times) <= 0) or abs(float(path.times[0])) > 1e-8:
@@ -127,7 +132,7 @@ class ValidationReport:
 
 
 class RobotValidator(Protocol):
-    """Future adapter consumes sampled base-frame paths; never commands hardware."""
+    """Future adapter consumes sampled paths; never commands hardware."""
 
     is_mock: bool
 
@@ -186,30 +191,34 @@ def retime_path(path: PathData, config: Config) -> PathData:
     if np.any(np.diff(path.times) <= 0):
         raise ValueError("Input times must strictly increase")
     distances = arc_lengths(path.points)
-    length = float(distances[-1])
-    baseline = max(config.initial_duration, float(path.times[-1] - path.times[0])) if config.never_shorten else config.sample_dt
+    geometry_length = float(distances[-1])
+    length = float(path.timing_length)
+    if path.reference_length <= 0 or path.reference_duration <= 0:
+        raise ValueError("Positive immutable timing references required")
+    baseline = path.reference_duration * max(1., length / path.reference_length) if config.never_shorten else config.sample_dt
     duration = max(baseline, 1.875 * length * config.speed_safety / config.max_ee_speed)
     count = max(1, int(np.ceil(duration / config.sample_dt)))
     duration = count * config.sample_dt
     times = np.arange(count + 1, dtype=float) * config.sample_dt
     fractions = min_jerk(times / duration)
-    if length == 0:
+    if geometry_length == 0:
         points = np.repeat(path.points[:1], count + 1, axis=0)
         xi = path.xi[0] + fractions * (path.xi[-1] - path.xi[0])
     else:
         # Remove zero-length segments only for interpolation; retain final xi.
         keep = np.r_[np.diff(distances) > 0, True]
         interpolation_distances = distances[keep]
-        sample_distances = fractions * length
+        sample_distances = fractions * geometry_length
         points = np.column_stack([np.interp(sample_distances, interpolation_distances, path.points[keep, axis]) for axis in range(3)])
         xi = np.interp(sample_distances, interpolation_distances, path.xi[keep])
     points[[0, -1]] = path.points[[0, -1]]
     xi[[0, -1]] = path.xi[[0, -1]]
-    return PathData(path.path_id, points, xi, times)
+    return PathData(path.path_id, points, xi, times, path.reference_length,
+                    path.reference_duration, path.timing_length)
 
 
 def validate_paths(originals: dict[str, PathData], paths: dict[str, PathData], records: list[Correction], config: Config, revision: int, last_change: float | None = None, robot_validator: RobotValidator | None = None) -> ValidationReport:
-    """Check candidate base-frame paths and construct execution samples in SI.
+    """Check candidate paths and construct uniformly timed execution samples.
 
     last_change is the maximum corresponding-point displacement of the last
     completed gesture, in metres; it is not the cumulative original offset.
