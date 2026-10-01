@@ -1,5 +1,7 @@
 # 웹캠 기반 가상 3D 왕복 경로 편집 시연
 
+> 프로젝트 전체 상태, 새 clone에서 세 worktree를 만드는 방법, Ubuntu 24.04 설치와 음성·ROS 통합 순서는 [저장소 루트 README](../README.md)를 먼저 본다. 아래 명령의 `~/manipulator_branches/main`, `voice`, `urdf`는 현재 개발 PC의 **서로 다른 Git worktree**이며 한 checkout 안의 하위 폴더가 아니다.
+
 일반 웹캠 영상 위에 outbound(가는 길, 실선)와 return(오는 길, 점선)을 겹쳐 표시하고, MediaPipe 한 손의 핀치 드래그로 XYZ 경로를 수정한다. 이 화면은 카메라-로봇 캘리브레이션이 없는 `virtual_edit_frame` 시연이다. landmark Z는 상대 제어 입력이며 실제 카메라 거리나 절대 손 위치가 아니다. 실제 로봇을 움직이거나 로봇 안전성을 검증하지 않는다.
 
 기존 matplotlib 마우스 편집기는 그대로 사용할 수 있다. 계산, 제한, undo/redo, 검사와 저장은 두 UI가 같은 `core.py`/`editor.py`를 사용한다.
@@ -102,6 +104,7 @@ python -m pac_path_editor --config configs/demo.json --demo bump \
 - 비대상을 먼저 반투명으로 그리고 대상을 나중에 그린다. 드래그 중 이전 대상은 검정 비교선, 새 경로는 고정 공통 Z colormap으로 표시한다.
 - `both`는 선택한 원본 `xi`를 두 경로에서 고정해 한 번의 undo로 되돌린다.
 - X는 화면 오른쪽, Y는 화면 위, Z는 landmark z의 별도 gain/sign에 대응한다. 수치는 virtual 단위이고 화면에 landmark XYZ, 요청/적용 변위, Z 값을 표시한다.
+- 현재 정사영 `OverlayProjection`은 경로의 X/Y만 화면 위치로 투영한다. Z는 선을 화면 위아래로 옮기지 않고 고정 colormap의 색과 숫자로 표시된다. MediaPipe landmark Z는 손목 기준 상대 깊이이므로 손 전체의 절대 앞뒤 거리로 해석할 수 없고, gain을 키워도 이 의미상의 한계는 해결되지 않는다.
 
 ## 저장과 schema
 
