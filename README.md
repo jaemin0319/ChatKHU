@@ -8,7 +8,145 @@
 
 이 전체 흐름이 완성된 상태는 아니다. 현재 코드는 **가상 좌표계의 경로 편집 시연**까지 구현하며 실제 로봇 실행은 차단한다.
 
+
+## 먼저 실행하기: A 모드 — 음성 없이 키보드 + 웹캠
+
+**A 모드만 사용할 경우 이 절차만 진행하면 된다. ROS·음성·URDF 설치는 필요 없다.**
+
+키보드는 편집 시작·대상 선택·되돌리기·완료 명령을 담당하고, **경로점의 이동은 웹캠으로 인식한 손의 핀치·드래그로 수행한다.** 현재 A 모드는 키보드 방향키만으로 XYZ 경로점을 이동하는 기능이 아니다. 웹캠·손 입력 없이 마우스로 편집하려면 아래 B 모드를 사용한다.
+
+### A 모드에 필요한 것
+
+| 항목 | A 모드 요구사항 |
+|---|---|
+| 운영체제 | Ubuntu 24.04 데스크톱 환경 |
+| Python | Ubuntu 기본 Python 3.12; 사용자 실행 환경은 3.12.3 |
+| 장치 | 일반 웹캠, 키보드, 화면 |
+| 저장소 브랜치 | `work/webcam-path-editor` |
+| 작업 디렉터리 | `~/manipulator_branches/main/path 편집/` |
+| 가상환경 이름 | `.venv` |
+| 가상환경 위치 | `~/manipulator_branches/main/path 편집/.venv/` |
+| Python 설치 항목 | 프로젝트의 `[webcam]` extra |
+| 필요 없는 항목 | ROS 2, colcon build, 음성 브랜치, Gemini API 키, `.env`, 마이크, URDF, MuJoCo |
+
+설치에는 인터넷이 필요하다. 기본 `mp.solutions.hands` 방식은 별도 모델 파일 다운로드 절차가 필요 없으며, A 모드 실행에 Gemini 연결을 사용하지 않는다.
+
+### 처음 사용하는 컴퓨터: 설치
+
+아래는 `~/manipulator_branches/main`이 아직 없는 새 컴퓨터 기준이다. **이미 작업 중인 저장소가 있으면 다시 clone하지 말고 기존 브랜치와 파일을 유지한 채 가상환경 설치 단계부터 진행한다.** 다른 위치에 clone했다면 이후 `cd` 경로를 해당 위치로 바꾼다.
+
+시스템 패키지 설치:
+
+```bash
+sudo apt update &&
+sudo apt install -y git python3-venv python3-pip libgl1 libglib2.0-0t64
+```
+
+작업 브랜치만 체크아웃하여 준비:
+
+```bash
+mkdir -p ~/manipulator_branches &&
+git clone --branch work/webcam-path-editor \
+  https://github.com/jaemin0319/26_project_manipulator.git \
+  ~/manipulator_branches/main &&
+git -C ~/manipulator_branches/main branch --show-current
+```
+
+마지막에 `work/webcam-path-editor`가 표시돼야 한다. A 모드는 `voice/`, `urdf/` worktree를 생성하지 않는다.
+
+프로젝트 전용 가상환경과 의존성 설치:
+
+```bash
+cd ~/manipulator_branches/main/"path 편집" &&
+python3 -m venv .venv &&
+.venv/bin/python -m pip install -e '.[webcam]' &&
+.venv/bin/python -m pip check
+```
+
+`.[webcam]`은 현재 폴더의 `pyproject.toml`을 읽어 프로젝트와 웹캠 의존성을 함께 설치한다. `-e`는 이후 소스 수정이 실행에 반영되는 개발 설치 방식이다. 정상 설치 시 `Successfully installed ...`, 의존성 검사 시 `No broken requirements found.`가 표시된다.
+
+가상환경은 생성한 컴퓨터의 Python과 경로에 연결되므로 다른 컴퓨터로 복사하지 않는다. 새 컴퓨터에서는 같은 명령으로 다시 생성한다. `.venv`, 캐시, 출력 파일은 README와 함께 GitHub에 업로드하지 않는다.
+
+### 설치 확인
+
+```bash
+cd ~/manipulator_branches/main/"path 편집" &&
+.venv/bin/python -c 'import sys, numpy, matplotlib, cv2, mediapipe, pac_path_editor; print("Python:", sys.executable); print("NumPy:", numpy.__version__); print("OpenCV:", cv2.__version__); print("MediaPipe:", mediapipe.__version__)'
+```
+
+Python 경로가 `path 편집/.venv/bin/python`을 가리키고, NumPy 1.x·MediaPipe 0.10.21·OpenCV 4.11.0이 출력돼야 한다. OpenCV wheel 설치 버전 `4.11.0.86`과 `cv2.__version__` 출력 `4.11.0`은 표기가 다르다.
+
+### 매번 실행하는 A 명령
+
+설치가 끝난 뒤에는 새 터미널에서도 아래 명령만 실행한다.
+
+```bash
+cd ~/manipulator_branches/main/"path 편집" &&
+.venv/bin/python -m pac_path_editor --webcam --camera 0 --no-voice
+```
+
+가상환경의 Python을 직접 지정하므로 `source`나 ROS setup이 필요 없다. 카메라가 다른 번호라면 `--camera 0`을 `--camera 1` 등으로 바꾼다. 터미널에서 맨 앞의 `(.venv)` 표시가 없어도 위 명령은 `.venv`를 사용한다.
+
+정상 실행하면 웹캠 영상, 가는 길 실선, 오는 길 점선, 방향 화살표, 편집 상태와 손 인식 상태, Z 색상 범례가 나타난다. 아직 별도의 제품 UI 시안은 구현되지 않았다.
+
+### 첫 조작과 저장
+
+1. 웹캠 창을 클릭하고 한글 입력을 영문으로 전환한다. 아래 키는 **Shift 없이 소문자**로 누른다.
+2. `e`로 편집을 시작한 뒤 `2`로 가는 길을 선택한다.
+3. 손을 펼친 상태로 엄지·검지 사이 커서를 경로의 안쪽에 가져간다. 정확한 시작점·끝점은 이동할 수 없다.
+4. 그 위치에서 엄지·검지를 맞대 새로 핀치한다.
+5. 핀치를 유지하며 손을 움직여 미리보기를 확인한다.
+6. 손가락을 벌려 이번 드래그를 완료한다.
+7. `u`로 되돌리기, `y`로 다시 적용을 확인한다.
+8. `f`를 눌러 편집 완료 검사를 통과하면 저장한다. `q`는 종료이며 자동 저장하지 않는다.
+
+기본 저장 파일은 실행 디렉터리 기준 `output/webcam-session.json`, 즉 위 명령 기준 `~/manipulator_branches/main/path 편집/output/webcam-session.json`이다. 저장 파일의 존재와 화면의 성공·거부 안내를 확인한다. 완료 또는 저장은 실제 로봇 실행을 의미하지 않는다.
+
+**Z 제한:** 손 전체의 앞뒤 이동을 안정적인 깊이 입력으로 쓰는 문제는 아직 해결되지 않았다. 현재 선의 화면 위치는 XY로 그리며 Z는 색상과 숫자로 확인한다. 상세한 조건은 아래 “좌표계와 Z 입력 제한”을 참고한다.
+
+### A 모드의 직접 의존성
+
+| 라이브러리 | `pyproject.toml` 버전 조건 | 역할 | 설치 방법 |
+|---|---|---|---|
+| `numpy` | `>=1.26,<2` | 경로·벡터 계산 | `.[webcam]`에 포함 |
+| `matplotlib` | `>=3.6` | 기존 viewer와 색상 처리 | `.[webcam]`에 포함 |
+| `mediapipe` | `==0.10.21` | 손 관절 추적 | `webcam` extra에 포함 |
+| `opencv-contrib-python` | `==4.11.0.86` | 카메라와 GUI 표시 | `webcam` extra에 포함 |
+| `pytest` | `>=7.4` | 자동 테스트용; 실행만 할 때 불필요 | 필요 시 `.[dev]` 추가 설치 |
+
+pip가 설치하는 JAX, protobuf, sounddevice 등의 전이 의존성은 수동으로 나열하여 설치할 필요가 없다. 특히 `sounddevice`가 MediaPipe의 의존성으로 설치되더라도 A 모드가 마이크를 사용하는 것은 아니다. 버전 범위가 있는 패키지는 설치 시점에 따라 달라질 수 있으므로 전체 환경이 완전히 고정됐다고 간주하지 않는다.
+
+`opencv-python` 또는 `opencv-python-headless`를 추가로 설치하지 않는다. A 모드는 `opencv-contrib-python`의 GUI를 사용한다.
+
+### A 모드 설치 후 파일 구조
+
+| 경로 | 역할 | 생성 방식 |
+|---|---|---|
+| `main/README.md` | 전체 프로젝트 안내; 현재 문서 | Git에서 받음 |
+| `main/path 편집/README.md` | 경로 편집기 세부 안내 | Git에서 받음 |
+| `main/path 편집/pyproject.toml` | Python 패키지와 의존성 정의 | Git에서 받음 |
+| `main/path 편집/configs/demo.json` | 기존 matplotlib viewer용 설정 | Git에서 받음; 웹캠에 그대로 사용하지 않음 |
+| `main/path 편집/src/pac_path_editor/` | 실제 Python 소스 | Git에서 받음 |
+| `main/path 편집/src/pac_path_editor/__main__.py` | 실행 모드·CLI 진입점 | Git에서 받음 |
+| `main/path 편집/src/pac_path_editor/webcam.py` | 손 추적·핀치·키보드·화면 | Git에서 받음 |
+| `main/path 편집/src/pac_path_editor/ros_bridge.py` | 공통 편집 명령과 선택적 ROS 연결 | Git에서 받음; A에서 ROS 서버 실행 안 함 |
+| `main/path 편집/src/pac_path_editor/{core,editor,validation,storage}.py` | 경로 계산·상태·검사·저장 | Git에서 받음 |
+| `main/path 편집/tests/` | 자동 테스트 | Git에서 받음 |
+| `main/path 편집/.venv/` | A/B 모드 전용 Python 환경 | 설치 명령으로 각 컴퓨터에서 생성 |
+| `main/path 편집/output/` | 저장 session·합성 screenshot | 저장·렌더링 시 생성 |
+
+`main/`은 이 안내에서 선택한 저장소 폴더 이름이며, Git 브랜치 `main`이라는 의미가 아니다.
+
+## 문서 읽는 순서
+
+- **A만 실행:** 위 설치 → 설치 확인 → A 명령 → 첫 조작까지 진행하면 된다.
+- **구현 범위 파악:** 아래 현재 구현 상태·모듈과 데이터 흐름을 읽는다.
+- **음성·ROS 연결:** 선택 사항인 worktree 추가와 C/D 통합 환경 설치를 진행한다.
+- **문제 발생:** 아래 문제 해결 표에서 A 모드와 ROS·음성 문제를 구분해 확인한다.
+
 ## 현재 구현 상태
+
+아래 표는 기존 README의 코드·검증 기록을 보존한 것이다. 이후 사용자 웹캠 실행·조작 보고는 있었으나 장치 전반에 대한 체계적 검증은 별도이며, Z 입력 문제는 남아 있다.
 
 | 단계/기능 | 관련 파일·모듈 | 구현 여부 | 검증 수준 | 제한사항·남은 작업 |
 |---|---|---|---|---|
@@ -30,7 +168,7 @@
 | IK·관절 한계·특이점·충돌·동역학·토크 | `validation.py`의 robot check 항목 | 미구현 | 화면과 저장 결과에 `NOT_EVALUATED` 표시 | 실제 robot model 기반 validator 필요 |
 | 시뮬레이션 경로 추종·하드웨어 실행 | 없음 | 미구현 | 미검증 | 현재 `REQUEST_EXECUTION`은 항상 거부 |
 
-2026-09-29의 과거 결과는 경로 110개, 음성 132개 자동 테스트 통과로 [`RESULT.md`](path%20편집/RESULT.md)에 기록돼 있다. 아래 “이번 문서 작업에서 확인한 내용”은 이번에 실제 재실행한 결과만 별도로 적는다. 자동 테스트는 실제 카메라·마이크·로봇 검증을 대신하지 않는다.
+2026-09-29의 과거 결과는 경로 110개, 음성 132개 자동 테스트 통과로 [`RESULT.md`](path%20편집/RESULT.md)에 기록돼 있다. 아래 “기존 README에 기록된 검증”에는 원문이 보고한 재실행 결과를 보존했다. 이번 A 모드 문서 개정에서는 해당 코드·자동 테스트·장치를 새로 실행하지 않았다. 자동 테스트는 실제 카메라·마이크·로봇 검증을 대신하지 않는다.
 
 ## 브랜치와 디렉터리 구조
 
@@ -45,13 +183,14 @@
 
 `main/`은 로컬 worktree의 폴더 이름일 뿐 현재 체크아웃 브랜치를 보장하지 않는다. 실제 브랜치는 `git branch --show-current`로 확인한다. 현재 `~/manipulator_branches/main`은 `work/webcam-path-editor`다.
 
-현재 컴퓨터의 핵심 구조:
+ROS·음성·모델을 함께 개발할 때의 통합 구조(선택 사항). A만 사용할 때는 위 A 모드 구조를 따른다:
 
 ```text
 ~/manipulator_branches/                 # Git 저장소 자체가 아닌 worktree 모음
 ├── main/                               # work/webcam-path-editor
 │   ├── README.md
 │   └── path 편집/
+│       ├── .venv/                     # A/B 전용 환경, 각 PC에서 생성
 │       ├── configs/demo.json
 │       ├── src/pac_path_editor/
 │       └── tests/
@@ -60,27 +199,24 @@
 │   └── src/{manipulator_interfaces,manipulator_voice}/
 ├── urdf/                               # urdf
 │   └── 6dof_description/
-└── .venv-webcam/                       # 로컬 가상환경, Git 비관리
+└── .venv-webcam/                       # C/D 통합용 별도 환경, 선택 사항
 ```
 
-GitHub에서 새로 clone하면 처음부터 `main/`, `voice/`, `urdf/` 세 폴더가 생기지 않는다. 다음 절차가 현재 통합 개발 구조를 재현한다.
+### 음성·URDF worktree 추가 — A 모드에서는 생략
+
+위 A 설치에서 clone한 저장소에 음성 또는 모델 작업이 필요할 때만 추가한다. 아래는 해당 로컬 브랜치와 목적지 폴더가 아직 없을 때의 명령이다. 이미 존재하면 반복 생성하지 말고 `git branch -vv`, `git worktree list`로 확인한다.
 
 ```bash
-mkdir -p ~/manipulator_branches
-cd ~/manipulator_branches
-git clone https://github.com/jaemin0319/26_project_manipulator.git main
-cd main
-git switch --track origin/work/webcam-path-editor
-git branch --track work/gemini-live-voice origin/work/gemini-live-voice
-git branch --track urdf origin/urdf
-git worktree add ../voice work/gemini-live-voice
-git worktree add ../urdf urdf
-cd ..
-git -C main worktree list
-git -C main branch --show-current
+cd ~/manipulator_branches/main &&
+git fetch origin &&
+git branch --track work/gemini-live-voice origin/work/gemini-live-voice &&
+git branch --track urdf origin/urdf &&
+git worktree add ../voice work/gemini-live-voice &&
+git worktree add ../urdf urdf &&
+git worktree list
 ```
 
-이미 같은 이름의 로컬 브랜치가 있으면 `git branch --track ...`를 다시 실행하지 말고 `git branch -vv`로 위치를 확인한다. 브랜치 전환 전에 항상 변경사항을 확인한다.
+원본 clone이나 worktree를 이동·삭제하면 연결이 끊길 수 있다. 폴더 정리 전에 `git worktree list`로 연결을 확인한다.
 
 세부 문서:
 
@@ -112,10 +248,10 @@ git -C main branch --show-current
 현재 연결과 향후 연결:
 
 ```mermaid
-flowchart LR
+flowchart TD
     K[키보드] --> EC[EditorCommands]
     CAM[웹캠 frame] --> MP[MediaPipe Hands]
-    MP --> HI[HandInput<br/>pinch + 상대 XYZ]
+    MP --> HI["HandInput: pinch + 상대 XYZ"]
     HI --> EC
 
     MIC[마이크 또는 text] --> GL[Gemini Live]
@@ -123,7 +259,7 @@ flowchart LR
     VC -->|EditCommand service| RB[RosBridge queue]
     RB -->|OpenCV owner thread drain| EC
 
-    EC --> ED[Editor<br/>최종 수락·상태 권한자]
+    EC --> ED["Editor: 최종 수락·상태 권한자"]
     ED --> CORE[core correction]
     ED --> VAL[prototype validation + retime]
     ED --> STORE[schema 2 JSON]
@@ -141,7 +277,9 @@ flowchart LR
 
 `urdf` 브랜치의 `6dof_description/`에는 `urdf/6dof.xacro`, STL mesh, RViz 설정, `launch/display.launch.py`, MuJoCo XML이 있다. 이 패키지는 모델 표시와 수동 관절 조작용이며 현재 경로 편집기의 `PathData`를 받거나 추종하지 않는다. 따라서 모델 파일의 존재를 IK·충돌 검사 또는 시뮬레이션 경로 실행이 구현됐다는 뜻으로 해석하면 안 된다.
 
-## Ubuntu 24.04 설치
+## Ubuntu 24.04 상세 설치 및 선택적 통합 환경
+
+A만 실행한다면 앞부분의 설치 절차로 충분하다. 아래는 기존 검증 기록과 C/D 모드의 추가 설치를 설명한다.
 
 ### 확인 환경과 지원 범위
 
@@ -150,9 +288,9 @@ flowchart LR
 - 실제 확인 패키지: NumPy 1.26.4, matplotlib 3.6.3, MediaPipe 0.10.21, OpenCV 4.11.0
 - ROS 통합 확인 환경: ROS 2 Jazzy
 
-Python 3.10 이상이라는 선언은 모든 조합의 장치 검증을 뜻하지 않는다. 현재 재현성이 확인된 조합은 Ubuntu 24.04/Python 3.12.3이다.
+Python 3.10 이상이라는 선언은 모든 조합의 장치 검증을 뜻하지 않는다. 기존 설치·자동 검사 기록의 기준은 Ubuntu 24.04/Python 3.12.3이며, 실제 장치 검증 범위는 현재 구현 상태 표를 따른다.
 
-### 시스템 패키지
+### 시스템 패키지와 선택적 추가 패키지
 
 기본 개발 환경:
 
@@ -167,13 +305,13 @@ OpenCV wheel import에서 공유 라이브러리 오류가 날 때만 Ubuntu 24.
 sudo apt install -y libgl1 libglib2.0-0t64
 ```
 
-음성에서 실제 마이크·스피커를 쓸 때 PortAudio runtime이 필요하다.
+**D 음성 모드에서만** 실제 마이크·스피커를 쓸 때 PortAudio runtime이 필요하다. A 실행을 위해 아래 패키지를 설치할 필요는 없다.
 
 ```bash
 sudo apt install -y libportaudio2
 ```
 
-ROS 통합은 Ubuntu 24.04용 ROS 2 Jazzy가 필요하다. [ROS 2 Jazzy 공식 Ubuntu deb 설치 문서](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html)를 따라 설치하고, 개발 도구와 desktop 설치를 선택한 경우 다음 파일이 있어야 한다.
+**C/D ROS 통합에서만** Ubuntu 24.04용 ROS 2 Jazzy가 필요하다. [ROS 2 Jazzy 공식 Ubuntu deb 설치 문서](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html)를 따라 설치하고, 개발 도구와 desktop 설치를 선택한 경우 다음 파일이 있어야 한다.
 
 ```bash
 test -f /opt/ros/jazzy/setup.bash && echo "ROS 2 Jazzy 설치 확인"
@@ -181,7 +319,9 @@ test -f /opt/ros/jazzy/setup.bash && echo "ROS 2 Jazzy 설치 확인"
 
 시스템 Python에 `sudo pip install`을 실행하지 않는다.
 
-### Python 가상환경과 프로젝트 설치
+### C/D 통합용 별도 가상환경 — A 모드에서는 생략
+
+A/B는 `path 편집/.venv`를 사용한다. 아래 C/D는 기존 통합 절차의 `~/manipulator_branches/.venv-webcam`을 사용하며, 두 환경을 혼동하지 않는다. A 전용 `.venv`를 ROS용으로 바꾸거나 삭제할 필요는 없다.
 
 아래 명령은 위의 세 worktree 구조를 만든 뒤 `~/manipulator_branches`에서 실행한다. `--system-site-packages`는 apt로 설치된 ROS Python 패키지를 같은 Python 3.12 가상환경에서 사용하기 위해 실제 확인 환경에서 사용한 방식이다.
 
@@ -195,7 +335,7 @@ python -m pip install -r voice/requirements-voice.txt
 python -m pip check
 ```
 
-웹캠만 사용할 때는 마지막 `requirements-voice.txt` 설치가 필요 없다. 다른 프로젝트의 가상환경을 재사용하거나 변경하지 않는다.
+A만 사용할 때는 이 통합 설치 절차 전체를 생략한다. 다른 프로젝트의 가상환경을 재사용하거나 변경하지 않는다.
 
 직접 의존성:
 
@@ -215,7 +355,7 @@ python -m pip check
 
 `opencv-python`, `opencv-python-headless`, `opencv-contrib-python`을 함께 설치하지 않는다. 이 프로젝트는 GUI가 포함된 `opencv-contrib-python` 하나를 사용한다.
 
-### MediaPipe 모델
+### 선택적 MediaPipe Tasks 모델 — 기본 A 실행에서는 생략
 
 고정된 MediaPipe 0.10.21에서는 `mp.solutions.hands`가 확인돼 별도 모델 파일이 필요 없다. `hand_api=tasks`를 명시하거나 향후 설치본에서 Solutions API를 사용할 수 없을 때만 Hand Landmarker 모델을 배치한다.
 
@@ -229,7 +369,7 @@ curl -L \
 
 웹캠 설정 JSON에서 `"hand_api": "tasks"`, `"model_path": "models/hand_landmarker.task"`를 설정한다.
 
-### 음성 환경변수
+### D 모드 음성 환경변수 — A 모드에서는 생략
 
 ```bash
 cd ~/manipulator_branches
@@ -261,12 +401,11 @@ API key는 경로 session JSON에 저장되지 않는다.
 
 모든 경로 편집 명령은 공백이 있는 `path 편집` 폴더에서 실행하므로 경로를 인용한다.
 
-### A. 웹캠 단독 실행
+### A. 음성 없이 키보드 + 웹캠 실행
 
 ```bash
 cd ~/manipulator_branches/main/'path 편집'
-source ../../.venv-webcam/bin/activate
-python -m pac_path_editor --webcam --camera 0 --no-voice
+.venv/bin/python -m pac_path_editor --webcam --camera 0 --no-voice
 ```
 
 `--camera 0`은 기본 카메라다. 다른 장치는 `--camera 1`처럼 바꾼다. 정상 실행하면 실제 카메라 배경, outbound 실선, return 점선, 방향 화살표, 상태·mode·pinch·hand 표시, Z color bar가 나타난다.
@@ -274,7 +413,7 @@ python -m pac_path_editor --webcam --camera 0 --no-voice
 장치 없이 연결을 확인하려면:
 
 ```bash
-python -m pac_path_editor --webcam --synthetic --no-voice \
+.venv/bin/python -m pac_path_editor --webcam --synthetic --no-voice \
   --screenshot output/synthetic.png --save output/synthetic.json
 ```
 
@@ -292,18 +431,17 @@ python -m pac_path_editor --webcam --synthetic --no-voice \
 --ros                      ROS bridge 포함 실행
 ```
 
-### B. 기존 마우스 기반 viewer
+### B. 웹캠 없이 마우스로 편집하는 기존 viewer
 
 ```bash
 cd ~/manipulator_branches/main/'path 편집'
-source ../../.venv-webcam/bin/activate
-python -m pac_path_editor --config configs/demo.json
+.venv/bin/python -m pac_path_editor --config configs/demo.json
 ```
 
 headless 확인:
 
 ```bash
-python -m pac_path_editor --config configs/demo.json --demo bump \
+.venv/bin/python -m pac_path_editor --config configs/demo.json --demo bump \
   --headless --screenshot output/bump.png
 ```
 
@@ -382,32 +520,32 @@ ros2 run manipulator_voice voice_commander --env-file voice/.env --text --no-spe
 
 ## 웹캠 조작
 
-OpenCV 창에 키보드 포커스가 있어야 단축키가 들어간다.
+A 모드는 키보드로 명령을 내리고 손으로 경로를 이동한다. OpenCV 창에 키보드 포커스가 있어야 단축키가 들어간다. 영문 입력 상태에서 Shift 없이 소문자 키를 사용한다. 화면의 대문자 안내는 키 이름 표기다.
 
 | 키/입력 | 실제 동작 |
 |---|---|
-| `E` | 현재 확정 경로에서 편집 session 시작 |
+| `e` | 현재 확정 경로에서 편집 session 시작 |
 | `1` | `both` 선택. 대기 중이면 편집도 시작 |
 | `2` | `outbound` 선택. 대기 중이면 편집도 시작 |
 | `3` | `return` 선택. 대기 중이면 편집도 시작 |
-| `U` | 마지막 완료 gesture/reset undo |
-| `Y` | redo |
-| `R` | 현재 편집 후보를 원본으로 reset |
-| `C` | 편집 session 전체 취소, 확정 경로로 복귀 |
-| `F` | 편집 완료 검사. 통과하면 `--save` 경로에 저장 |
+| `u` | 마지막 완료 gesture/reset undo |
+| `y` | redo |
+| `r` | 현재 편집 후보를 원본으로 reset |
+| `c` | 편집 session 전체 취소, 확정 경로로 복귀 |
+| `f` | 편집 완료 검사. 통과하면 `--save` 경로에 저장 |
 | `Esc` | 현재 drag만 취소 |
-| `Q` | 종료. 진행 중 drag는 취소되며 자동 저장하지 않음 |
+| `q` | 종료. 진행 중 drag는 취소되며 자동 저장하지 않음 |
 
 처음 조작하는 순서:
 
-1. `E`, `1`, `2`, `3` 중 하나로 편집을 시작하고 대상을 고른다.
+1. `e`, `1`, `2`, `3` 중 하나로 편집을 시작하고 대상을 고른다.
 2. 손 전체가 보이게 한 뒤 엄지와 검지를 펼친다. 편집 진입 시 이미 닫힌 손은 먼저 펼쳐야 한다.
 3. 엄지 끝 4번과 검지 끝 8번의 중간 커서를 대상 경로 가까이 옮긴다.
 4. 경로 위에서 **새로** 핀치한다. 이미 핀치한 채 경로로 접근하면 선택되지 않는다.
 5. 핀치를 유지한 채 손 landmark XYZ를 움직여 preview를 확인한다.
 6. 손가락을 정상적으로 펼쳐 gesture를 확정한다.
-7. 필요하면 `U`, `Y`, `R`로 수정한다.
-8. `F`로 검사하고 저장한다.
+7. 필요하면 `u`, `y`, `r`로 수정한다.
+8. `f`로 검사하고 저장한다.
 
 드래그 중 대상 전환, undo, redo, reset, finish는 거부된다. `Esc` 또는 정상 해제로 drag를 먼저 끝낸다. 손 추적 상실은 정상 pinch 해제로 처리되지 않는다. 짧은 상실은 마지막 preview를 유지하고, `loss_timeout_s`를 넘으면 drag를 취소한다. 재인식만으로 재개하지 않으며 다시 손을 펼친 뒤 새 핀치가 필요하다.
 
@@ -465,7 +603,7 @@ JSON은 아래 키의 일부만 넣을 수 있으며 알 수 없는 키는 오�
 ```
 
 ```bash
-python -m pac_path_editor --webcam --no-voice \
+.venv/bin/python -m pac_path_editor --webcam --no-voice \
   --webcam-config configs/my-webcam.json
 ```
 
@@ -506,7 +644,7 @@ T_speed  = 1.875 × L × speed_safety / max_ee_speed
 
 - 웹캠 기본 저장: 작업 디렉터리 기준 `output/webcam-session.json`
 - matplotlib 기본 저장: `output/session.json`
-- 저장 시점: `F`/`FINISH_EDIT` 검사 통과 뒤. `Q`는 자동 저장하지 않음
+- 저장 시점: `f`/`FINISH_EDIT` 검사 통과 뒤. `q`는 자동 저장하지 않음
 - schema: `2`
 - 웹캠 frame: `virtual_edit_frame`
 - matplotlib `configs/demo.json` frame: `robot_base`
@@ -516,14 +654,14 @@ T_speed  = 1.875 × L × speed_safety / max_ee_speed
 로드:
 
 ```bash
-python -m pac_path_editor --webcam --no-voice --load output/webcam-session.json
-python -m pac_path_editor --load output/session.json
+.venv/bin/python -m pac_path_editor --webcam --no-voice --load output/webcam-session.json
+.venv/bin/python -m pac_path_editor --load output/session.json
 ```
 
 schema 1은 자동으로 해석하지 않는다. 기존 `robot_base` schema 1만 명시적으로 migration한다.
 
 ```bash
-python -c 'from pac_path_editor.storage import migrate_v1_session; migrate_v1_session("old.json", "schema2.json")'
+.venv/bin/python -c 'from pac_path_editor.storage import migrate_v1_session; migrate_v1_session("old.json", "schema2.json")'
 ```
 
 ## 테스트
@@ -532,8 +670,8 @@ python -c 'from pac_path_editor.storage import migrate_v1_session; migrate_v1_se
 
 ```bash
 cd ~/manipulator_branches/main/'path 편집'
-source ../../.venv-webcam/bin/activate
-python -m pytest -q
+.venv/bin/python -m pip install -e '.[dev]' &&
+.venv/bin/python -m pytest -q
 ```
 
 음성 자동 테스트:
@@ -547,23 +685,23 @@ PYTHONPATH="src/manipulator_voice:$PYTHONPATH" \
   python -m pytest -q src/manipulator_voice/test
 ```
 
-import와 CLI 확인:
+A 모드 import와 CLI 확인:
 
 ```bash
 cd ~/manipulator_branches/main/'path 편집'
-../../.venv-webcam/bin/python -c \
+.venv/bin/python -c \
   'import cv2, mediapipe, numpy, pac_path_editor; print(cv2.__version__, mediapipe.__version__, numpy.__version__)'
-../../.venv-webcam/bin/python -m pac_path_editor --help
-../../.venv-webcam/bin/python -m pac_path_editor --webcam --help
+.venv/bin/python -m pac_path_editor --help
+.venv/bin/python -m pac_path_editor --webcam --help
 ```
 
 자동 테스트는 geometry transaction과 합성 hand/audio/ROS 흐름을 확인한다. 실제 손 검출, 마이크 품질, Gemini 계정·모델, DDS 네트워크, robot dynamics를 확인하지 않는다.
 
-### 이번 문서 작업에서 재실행한 검증
+### 기존 README에 기록된 검증
 
-2026-10-01에 문서와 실제 코드의 옵션·import를 대조한 뒤 다음을 재실행했다. 이는 2026-09-29 [`RESULT.md`](path%20편집/RESULT.md)에 기록된 과거 실행과 별도다.
+기존 README에는 2026-10-01에 문서와 코드의 옵션·import를 대조하고 아래 명령을 재실행했다고 기록돼 있다. 이 표는 원문 기록이며 이번 A 모드 문서 개정에서 새로 실행한 결과가 아니다. 이는 2026-09-29 [`RESULT.md`](path%20편집/RESULT.md)에 기록된 과거 실행과 별도다.
 
-| 명령 | 이번 결과 |
+| 명령 | 원문에 기록된 결과 |
 |---|---|
 | `python -m pytest -q` (`main/path 편집`) | `110 passed in 4.62s` |
 | `python -m pytest -q src/manipulator_voice/test` (ROS setup/voice overlay 적용) | `132 passed in 3.58s` |
@@ -572,16 +710,19 @@ cd ~/manipulator_branches/main/'path 편집'
 | `python -m pac_path_editor --webcam --help` | webcam CLI help 정상 |
 | `ros2 run manipulator_voice voice_commander --help` | voice CLI help 정상 |
 
-이번 문서 작업에서는 카메라 frame 취득, 손 검출, 마이크, 스피커, Gemini API, ROS service round trip, RViz, MuJoCo, 실제 로봇을 실행하지 않았다. 그 항목의 상태는 과거 검증 기록과 “미확인” 표기를 유지했다.
+기존 2026-10-01 문서 작업에서는 카메라 frame 취득, 손 검출, 마이크, 스피커, Gemini API, ROS service round trip, RViz, MuJoCo, 실제 로봇을 실행하지 않았다. 그 항목의 상태는 과거 검증 기록과 “미확인” 표기를 유지했다.
 
 ## 문제 해결
 
+아래 A 모드 확인 명령은 `~/manipulator_branches/main/path 편집`에서 실행한다. ROS·Gemini 관련 행은 C/D 모드에만 해당한다.
+
 | 증상 | 가능한 원인 | 확인·조치 |
 |---|---|---|
-| `No module named mediapipe` | 가상환경 미활성 또는 webcam extra 미설치 | `which python`; `python -m pip show mediapipe`; 가상환경에서 `python -m pip install -e "./main/path 편집[webcam,dev]"` |
+| `No module named mediapipe` | 다른 Python으로 실행 또는 webcam extra 미설치 | `.venv/bin/python -m pip show mediapipe`; 같은 폴더에서 `.venv/bin/python -m pip install -e '.[webcam]'` |
 | `python3 -m venv` 실패 | Ubuntu venv 패키지 누락 | `python3 --version`; `apt-cache policy python3-venv`; `sudo apt install python3-venv` 후 새 전용 venv 생성 |
 | 카메라 열기 실패 | index 오류, 다른 앱 점유, 권한/장치 없음 | `ls -l /dev/video*`; 필요 시 `v4l2-ctl --list-devices`; 다른 앱 종료 후 `--camera 1` 등 확인 |
-| OpenCV 창이 뜨지 않음 | 원격/headless session, DISPLAY 없음, headless OpenCV 중복 | `echo "$DISPLAY"`; `python -m pip list | grep -i opencv`; 원격이면 `--synthetic --screenshot ...` 사용. headless와 contrib 동시 설치 금지 |
+| OpenCV 창이 뜨지 않음 | 원격/headless session, DISPLAY 없음, headless OpenCV 중복 | `echo "$DISPLAY"`; `.venv/bin/python -m pip list | grep -i opencv`; 원격이면 `--synthetic --screenshot ...` 사용. headless와 contrib 동시 설치 금지 |
+| 키보드가 반응하지 않음 | 창 포커스 없음, 한글 입력 또는 Shift 입력 | 웹캠 창을 클릭하고 영문 상태에서 `e`, `2`, `u` 등 소문자 입력 |
 | 손은 보이는데 경로 선택 안 됨 | 경로 선택 반경 밖, 비대상 mode, close 전이 없음 | 화면 `hand/pinch/armed/mode` 확인; 손을 먼저 펼친 뒤 커서를 대상 선 18 px 안에 두고 새 핀치 |
 | 편집 mode인데 drag 안 됨 | 닫힌 손으로 진입, 경로 밖 pinch가 arm 소비, 추적 상실 뒤 재인식 | 손을 충분히 펼쳐 `armed=True`를 확인한 후 다시 접근·핀치 |
 | Z 변화가 작거나 선 높이가 안 바뀜 | landmark Z의 상대 깊이 특성, projection이 XY만 사용 | `landmark XYZ`, request/applied, Z 숫자와 색상 확인. 선 위치가 Z로 이동하지 않는 것이 현재 구현. gain만으로 절대 깊이 문제 해결 불가 |
@@ -591,6 +732,8 @@ cd ~/manipulator_branches/main/'path 편집'
 | worktree Git 연결 오류 | `.git`의 gitdir가 이동·삭제됨 | `cat .git`; 원본 clone에서 `git worktree list`; `git worktree repair /새/worktree/경로`. 변경 파일을 지우거나 강제 push하지 않음 |
 
 `v4l2-ctl`이 없다면 진단 목적으로만 `sudo apt install v4l-utils`를 사용할 수 있다.
+
+이번 개정은 첨부된 README와 앞서 제공된 키 매핑·설치 출력에 근거한 문서 수정이다. 전체 소스 또는 새 컴퓨터의 장치를 직접 재검증한 것으로 해석하지 않는다.
 
 ## 남은 작업
 
