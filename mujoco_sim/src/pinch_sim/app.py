@@ -40,6 +40,7 @@ import json
 import os
 import threading
 import time
+from pathlib import Path
 
 os.environ.setdefault("MUJOCO_GL", "egl")   # offscreen Renderer on EGL, independent of the viewer's GLFW
 
@@ -157,6 +158,30 @@ class MouseEditor:
         return u * self.scale, v * self.scale
 
 
+def viewer_pose(cam: CameraModel) -> tuple[np.ndarray, float, float, float]:
+    """MuJoCo free-camera (lookat, distance, azimuth, elevation) looking like `cam` (a camera has no roll here)."""
+    c = -cam.R_cw.T @ cam.t_cw                       # camera position, world
+    f = cam.R_cw[2] / np.linalg.norm(cam.R_cw[2])     # optical axis (viewing direction), world
+    s = -c[2] / f[2] if f[2] < -1e-3 else 0.8         # where the view meets the desk (z = 0)
+    s = float(np.clip(s, 0.3, 2.0))
+    # the viewer's field of view (45 deg) is narrower than the monitor camera's (60 deg): step back a bit
+    # ... and look a little above the desk point so the arm (up to ~0.4 m) stays in view
+    return c + s * f + [0.0, 0.0, 0.12], 1.6 * s, float(np.degrees(np.arctan2(f[1], f[0]))), \
+        float(np.degrees(np.arcsin(f[2])))
+
+
+def camera_list() -> str:
+    """Connected V4L2 cameras, for the 'cannot open camera' message."""
+    names = []
+    for dev in sorted(Path("/sys/class/video4linux").glob("video*")):
+        try:
+            names.append(f"{dev.name[5:]} = {(dev / 'name').read_text().strip()}")
+        except OSError:
+            pass
+    return ("connected cameras: " + ", ".join(names) if names else "no camera is connected") + \
+        " (an Astra shows up as 'Astra' / 'Orbbec'; check the USB cable)"
+
+
 def screen_axes(cam: CameraModel) -> dict[str, np.ndarray]:
     """World unit vectors for voice directions, as seen on the monitor (the user looks at this view).
 
@@ -241,6 +266,22 @@ def main(argv=None):
                     help="do not move/resize the MuJoCo window next to side_cam (default: arrange, X11 only)")
     ap.add_argument("--voice-gateway", nargs="?", const="", metavar="SOCKET",
                     help="accept voice commands (쿠옹이) on a local socket; off by default")
+    ap.add_argument("--hand", nargs="?", const=0, type=int, metavar="CAMERA",
+                    help="hand input from a webcam (MediaPipe): pointing finger = click, pinch = drag "
+                         "(default camera 0; needs requirements-hand.txt)")
+    ap.add_argument("--no-hand-preview", action="store_true", help="hide the small webcam view")
+    ap.add_argument("--canvas", action="store_true",
+                    help="blank monitor: origin, x/y/z axes of the camera calibration, A, B and the path on white")
+    ap.add_argument("--calib", metavar="CAM2BASE_YAML",
+                    help="camera calibration in pac_vision cam2base.yaml format (default with --canvas: "
+                         "configs/cam2base_mock.yaml, made from the sim camera if missing)")
+    ap.add_argument("--start", metavar="X,Y,Z", help="A: end-effector start in the calibration frame, m "
+                    "(+X forward, +Y left, +Z up, origin = robot base on the desk)")
+    ap.add_argument("--goal", metavar="X,Y", help="B: target point on the desk in the calibration frame, m")
+    ap.add_argument("--user-side", choices=("right", "front", "behind", "left"), default="right",
+                    help="where the user stands around the robot; voice directions (right, away, ...) are fixed "
+                         "to the calibration axes as seen from there (default right: at -Y, facing +Y, "
+                         "so right = +X, away = +Y)")
     a = ap.parse_args(argv)
 
     cfg = load_config()
@@ -267,13 +308,75 @@ def main(argv=None):
     # monitor camera model: a real calibration file, or the exact model of the sim camera
     cam_model = CameraModel.load(a.monitor_calib) if a.monitor_calib else \
         CameraModel.from_mujoco(m, d, a.camera, W, H)
+    ab_start = None
+    if a.canvas or a.calib or a.start or a.goal:
+        from .canvas import cal_to_world, load_cam2base, world_to_cal, write_mock_cam2base
+        if a.canvas or a.calib:
+            calib = Path(a.calib) if a.calib else ROOT / "configs" / "cam2base_mock.yaml"
+            if not calib.exists() and not a.calib:
+                write_mock_cam2base(calib, CameraModel.from_mujoco(m, d, a.camera, W, H))
+                print(f"mock camera calibration written: {calib} (replace with the real cam2base.yaml)", flush=True)
+            from .pac_calib import load_camera
+            cam_model = load_camera(calib, load_cam2base)     # real pac_vision result or our MOCK file
+        if a.start or a.goal:
+            parse = lambda txt, n: [float(v) for v in txt.split(",")][:n]
+            a_cal = parse(a.start, 3) if a.start else world_to_cal(session.robot_state(d).tcp.p_m)
+            b_cal = (parse(a.goal, 2) + [0.0])[:3] if a.goal else world_to_cal(session.target.floor_point_m)
+            ok, why = session.cmd_ab(cal_to_world(a_cal), cal_to_world(b_cal), d)
+            if not ok:
+                ap.error(f"--start/--goal: {why}")
+            print(f"A = {np.round(a_cal, 3).tolist()}, B = {np.round(b_cal, 3).tolist()} (calibration frame, m)",
+                  flush=True)
+        ab_start = session.ab[0] if session.ab is not None else session.robot_state(d).tcp.p_m.copy()
+    hand_cam = None
     if a.video:
-        if not a.monitor_calib:
-            ap.error("--video needs --monitor-calib (the path is projected with the real camera's calibration)")
-        source = VideoFrameSource(a.video)
+        if not (a.monitor_calib or a.calib):
+            ap.error("--video needs --calib (or --monitor-calib): the path is projected with the real camera's "
+                     "calibration")
+        if a.hand is not None:
+            # real camera mode with hands: open the camera ONCE; the same frames are the monitor image and the
+            # hand tracking input (the hand is in the picture, so the finger is drawn where it really is)
+            from .hand_input import HandCamera, HandConfig
+            try:
+                hand_cam = HandCamera(HandConfig(mirror=False), device=str(a.video), set_size=False)
+            except RuntimeError as exc:
+                renderer.close()                  # no EGL clean-up noise after the message
+                ap.error(f"{exc}. {camera_list()}")
+
+            class _SharedSource:
+                def prepare(self, d_):
+                    pass
+
+                def frame(self):
+                    t_end = time.monotonic() + 5.0
+                    f = hand_cam.frame()
+                    while f is None and time.monotonic() < t_end:
+                        time.sleep(0.02)
+                        f = hand_cam.frame()
+                    if f is None:
+                        raise RuntimeError(f"no frame from camera {a.video}")
+                    return f
+            source = _SharedSource()
+        else:
+            try:
+                source = VideoFrameSource(a.video)
+            except RuntimeError as exc:
+                renderer.close()
+                ap.error(f"{exc}. {camera_list()}")
         f0 = source.frame()
         if (f0.shape[1], f0.shape[0]) != (cam_model.width, cam_model.height):
             cam_model = cam_model.scaled_to(f0.shape[1], f0.shape[0])
+    elif a.canvas:
+        from .canvas import blank_canvas
+        canvas_img = blank_canvas(cam_model)
+
+        class _CanvasSource:                       # the monitor shows a blank canvas instead of a camera
+            def prepare(self, d_):
+                pass
+
+            def frame(self):
+                return canvas_img.copy()
+        source = _CanvasSource()
     else:
         source = SimFrameSource(m, renderer, a.camera)
     print(f"monitor: {cam_model.name} {cam_model.width}x{cam_model.height}, "
@@ -295,7 +398,20 @@ def main(argv=None):
     clicks: list[str] = []
     mouse: list[tuple] = []          # ("press"|"move"|"release"|"cancel", x, y) in displayed-image pixels
     mouse_editor = MouseEditor(cam_model, cfg, layout.scale)
-    session.screen_axes = screen_axes(cam_model)     # voice directions = what the user sees on the monitor
+    # voice directions: fixed to the calibration axes as the user standing at --user-side sees them
+    # (not the camera image, so moving the camera or re-calibrating does not turn "right" around)
+    from .canvas import user_axes
+    session.screen_axes = user_axes(a.user_side)
+    hand_ctrl = hand_editor = None
+    if a.hand is not None:
+        from .hand_input import HandCamera, HandConfig, HandController
+        hcfg = HandConfig(camera=a.hand, mirror=hand_cam is None)       # a separate webcam is a mirror view
+        if hand_cam is None:
+            hand_cam = HandCamera(hcfg)
+        hand_ctrl = HandController(hcfg)
+        hand_editor = MouseEditor(cam_model, cfg, layout.scale)      # same geometry as the mouse ...
+        hand_editor.radius = hcfg.select_radius_px                  # ... with a wider pick radius
+        print(f"hand input: camera {a.hand} (point = select, pinch = drag)", flush=True)
 
     def on_mouse(event, x, y, flags, param):
         xi, yi = layout.to_image(x, y)
@@ -331,8 +447,12 @@ def main(argv=None):
 
     with mujoco.viewer.launch_passive(m, d, show_left_ui=False, show_right_ui=False) as viewer:
         texts = LatestTextPusher(viewer)
-        viewer.cam.lookat[:] = [0.0, 0.2, 0.15]
-        viewer.cam.distance, viewer.cam.azimuth, viewer.cam.elevation = 1.1, 135, -25
+        # start the 3-D view from where the user stands, so "right" (a user direction) is right on screen;
+        # the user can still rotate the 3-D view with the mouse
+        from .canvas import user_view
+        look, dist, az, el = user_view(a.user_side)
+        viewer.cam.lookat[:] = look
+        viewer.cam.distance, viewer.cam.azimuth, viewer.cam.elevation = dist, az, el
         wall0, sim0 = time.perf_counter(), d.time
         while viewer.is_running():
             now = time.perf_counter()
@@ -370,11 +490,26 @@ def main(argv=None):
                        f"{session.state}\ncommands: side_cam window" + (f"\n{peak_text(ov)}" if ov.peak is not None else ""),
                        f"frame {frame}  t={t_sim:.2f}s\n " + ("\n " if ov.peak is not None else "")))
             viewer.sync()
-            img = draw_overlay_2d(source.frame(), cam_model, ov)   # path etc. as a projected 2-D graph
+            # path etc. as a projected 2-D graph; on a real camera image only the path, A, B and the axes
+            img = draw_overlay_2d(source.frame(), cam_model, ov, minimal=bool(a.video))
+            if a.canvas or (a.video and a.calib):
+                from .canvas import draw_ab, draw_axes
+                if a.video:
+                    draw_axes(img, cam_model)
+                draw_ab(img, cam_model, ab_start, session.target.floor_point_m if session.target is not None else None)
             hint = "" if gateway is None else (gateway.client_line if gateway.connected else "쿠옹이 연결 대기")
             buttons = [(k, label, ENABLED[k](session.state)) for k, label in BUTTONS]
             img = ui.render(img, session, buttons, notices.current(), gateway.chat if gateway else [], hint,
                             protect_points(ov, cam_model, layout.scale))      # bubbles/notices never cover these
+            if hand_ctrl is not None:
+                from .hand_input import draw_preview
+                lm, _, _, _, hframe = hand_cam.latest()
+                shared = bool(a.video)                  # the hand is in the monitor image itself
+                if not a.no_hand_preview and not shared:
+                    draw_preview(img, hframe, lm, layout.top_h)
+                hand_ctrl.draw(img, layout.top_h, cam_model, layout.scale,
+                               landmarks=lm if shared and not a.no_hand_preview else None,
+                               img_wh=(layout.img_w, layout.img_h))
             cv2.imshow(WIN, img)
             if snap_dir and session.state != last_state:
                 cv2.imwrite(str(snap_dir / f"f{frame:05d}_{session.state}.png"), img)
@@ -415,12 +550,20 @@ def main(argv=None):
                 print(f"key {k} ({KOREAN[session.state]})", flush=True)
                 with session.acting("key"):
                     session.handle_key(k, d)
+            if hand_ctrl is not None:        # hand: same MouseEditor and Session methods as the mouse
+                lm, t_hand, cw, ch, _ = hand_cam.latest()
+                t_now = time.monotonic()
+                with session.acting("hand"):
+                    hand_ctrl.step(lm if t_now - t_hand < 0.3 else None, t_now, cw, ch,
+                                   layout.img_w, layout.img_h, hand_editor, session, d)
             if gateway is not None:          # voice requests: same thread, same Session methods, after keys
                 gateway.drain(session, d)
             if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
                 viewer.close()
     if gateway is not None:
         gateway.close()
+    if hand_cam is not None:
+        hand_cam.close()
     session.close()
     cv2.destroyAllWindows()
     summary = {"frames": frame, "lag_resets": lag_resets, "final_state": session.state, "last_run": session.last_run,

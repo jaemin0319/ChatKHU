@@ -67,7 +67,11 @@ DECLARATIONS = [
                     '처음 자리로 돌아온 뒤 "새 목표로 다시 해 볼까요?"에 아니라고 답했을 때도 부른다.'},
     {'name': 'undo_edit', 'description': '바로 직전 수정 하나를 되돌린다. 예: "되돌려", "방금 거 취소"'},
     {'name': 'reset_edit', 'description': '모든 수정을 버리고 처음 경로로 돌아간다. 예: "처음으로", "초기화"'},
-    {'name': 'finish_edit', 'description': '수정을 마친다. 예: "됐어", "다 됐어", "이제 끝"'},
+    {'name': 'finish_edit', 'description': '수정을 마치고 검증을 시작한다. 움직이지는 않는다. 예: "수정 완료", "됐어", "다 됐어", "이제 끝"'},
+    {'name': 'approve_move',
+     'description': '"이동할까요, 더 고칠까요?"에 움직이라고 답했을 때만 부른다. 예: "이동해", "응", "가", "움직여"'},
+    {'name': 'keep_editing',
+     'description': '"이동할까요, 더 고칠까요?"에 더 고치겠다고 답했을 때 부른다. 예: "더 고칠래", "좀 더 고칠게", "아직 더 고칠 거야"'},
 ]
 NAMES = {d['name'] for d in DECLARATIONS}
 EDIT_FUNCTIONS = {'move_here', 'move_region'}

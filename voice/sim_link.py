@@ -8,11 +8,14 @@
   move_region → move_point(target=start|middle|end) (whole은 아직 지원하지 않음)
   adjust_amount → undo_last_edit + move_point(한 단계 큰/작은 양) : "조금만 더" / "좀 덜"
   undo_edit   → undo_last_edit, reset_edit → reset_to_original
-  finish_edit → use_current_path : 검증을 시작하고, 통과하면 시뮬레이터가 자동으로 실행한다
+  finish_edit → use_current_path(auto_run=false) : 검증만 한다. 통과하면 "이동할까요, 더 고칠까요?"를 묻는다
+  approve_move → use_current_path : 그 질문에 "이동해·응"이면 움직인다 (물어본 그 경로일 때만)
+  keep_editing → 시뮬레이터 명령 없음 : "더 고칠래"면 질문을 접고 수정으로 돌아간다
   stop_motion → stop (말이 들리자마자 세션이 stop_now로 먼저 멈춘다), continue_motion → resume(forward)
   go_back → 멈춘 뒤면 resume(back), 목표에 도착한 뒤면 return_reverse (가던 길을 거꾸로, 검증 후 자동 이동)
   edit_return_path → edit_return, new_target → new_target, save_paths → save_paths
-- 멈춘 뒤 돌아가서 그 이동을 시작한 자리에 도착하면, 시뮬레이터가 그 이동의 수정 상태로 되돌린다(back_to_edit).
+- 멈춘 뒤 돌아가서 그 이동을 시작한 자리에 도착하면, 시뮬레이터가 그 이동의 수정 상태로 되돌리고(back_to_edit)
+  "이동할까요, 더 고칠까요?"를 다시 묻는다. 거꾸로 오던 길이면 목표 자리에서 ⑤ 질문을 앞말 없이 다시 묻는다.
 - 손(마우스 끌기, 나중에 핀치)으로 고치면 "경로를 수정했어요."라고 알린다.
 - 두 단계: 가는 길을 고쳐 목표까지 간 뒤, 돌아오는 길을 고치거나 가던 길을 거꾸로 돌아온다.
 - 멈춘 뒤 STOP_ASK_S 동안 계속/돌아가기 명령이 없으면 "계속 갈까요, 돌아갈까요?"를 묻는다.
@@ -40,10 +43,12 @@ REQUEST_DEADLINE_S = 4.0
 STOP_ASK_S = 5.0          # 멈춘 뒤 이 시간 동안 명령이 없으면 계속 갈지 돌아갈지 묻는다
 STOP_RECENT_S = 10.0      # 즉시 정지 뒤 AI가 부른 stop_motion은 "멈췄음"으로 답한다
 ASK_STOPPED = '계속 갈까요, 돌아갈까요?'
-ASK_ARRIVED = '목표에 도착했어요. 돌아오는 길을 수정할까요, 가던 길 그대로 반대로 돌아갈까요?'
+ASK_RETURN = '돌아오는 길을 수정할까요, 가던 길 그대로 반대로 돌아갈까요?'
+ASK_ARRIVED = '목표에 도착했어요. ' + ASK_RETURN
 ASK_HOME = '처음 자리로 돌아왔어요. 새 목표로 다시 해 볼까요?'
-BACK_TO_EDIT = {'outbound': '출발 자리로 돌아왔어요. 가는 길을 다시 고쳐 주세요.',
-                'return': '목표 자리로 돌아왔어요. 돌아오는 길을 다시 고쳐 주세요.'}
+ASK_APPROVE = '이동할까요, 더 고칠까요?'
+ASK_PASSED = '검증을 통과했어요. ' + ASK_APPROVE
+MOVE_START = '이동을 시작할게요.'
 HAND_EDITED = '경로를 수정했어요.'
 HAND_EDIT_QUIET_S = 1.0   # 손(마우스·핀치)으로 고친 뒤 이 시간 동안 또 고치지 않으면 한 번만 알린다
 
@@ -85,6 +90,7 @@ class SimEditor:
         self._stopped_at = 0.0
         self._stop_seq = 0        # 멈춤마다 +1, 계속/돌아가기 명령마다 +1 (5초 질문 취소)
         self._hand_timer: threading.Timer | None = None
+        self._ask_fp: str | None = None   # "이동할까요, 더 고칠까요?"를 물은 경로 (그 경로일 때만 이동 승인)
         self.connected = True
         self.announcements: queue.Queue[str] = queue.Queue()
         self._results: dict[str, dict] = {}
@@ -114,10 +120,14 @@ class SimEditor:
                         self._stopped_at = time.time()
                         self._stop_seq += 1
                         threading.Timer(STOP_ASK_S, self._ask_if_still_stopped, (self._stop_seq,)).start()
-                    if msg.get('kind') == 'edit_end' and msg.get('actor') == 'mouse' and \
+                    if msg.get('kind') == 'edit_end' and msg.get('actor') in ('mouse', 'hand') and \
                             (msg.get('data') or {}).get('kept'):
                         self._hand_edited()
                     text = _announcement(msg)
+                    if text in (ASK_PASSED, ASK_APPROVE):
+                        self._ask_fp = (msg.get('status') or {}).get('path_fp')
+                    elif msg.get('kind') == 'execution_start':
+                        self._ask_fp = None
                     if text:
                         self.announcements.put(text)
         except (EOFError, OSError, ValueError):
@@ -207,6 +217,8 @@ class SimEditor:
             self.ladder.forget()
         if name in MOTION_FUNCTIONS:
             return self._motion(name)
+        if name in ('approve_move', 'keep_editing'):
+            return self._approval(name)
         if name == 'save_paths':
             res = self._command('save_paths')
             if not res.get('accepted'):
@@ -214,12 +226,34 @@ class SimEditor:
             return {'status': 'applied', 'file': Path((res.get('detail') or {}).get('file', '')).name}
         command = {'undo_edit': 'undo_last_edit', 'reset_edit': 'reset_to_original',
                    'finish_edit': 'use_current_path'}[name]
-        res = self._command_fresh(command)
+        fields = {'auto_run': False} if name == 'finish_edit' else {}
+        res = self._command_fresh(command, **fields)
         if not res.get('accepted'):
             return self._refusal(res)
         if name == 'finish_edit':
-            return {'status': 'validating', 'next': 'auto_run_if_passed'}
+            st = res.get('status') or {}
+            if res.get('previous_state') == 'PASSED':   # 이미 통과한 경로: 알림 없이 AI가 이동할지 다시 묻는다
+                self._ask_fp = st.get('path_fp')
+                return {'status': 'passed', 'next': 'ask_move_or_edit'}
+            return {'status': 'validating', 'next': 'ask_before_moving'}
         return {'status': 'applied'}
+
+    def _approval(self, name: str) -> dict[str, Any]:
+        """"이동할까요, 더 고칠까요?"의 답. 이동은 물어본 그 경로가 그대로일 때만 한다."""
+        asked = self._ask_fp is not None and self._ask_fp == self.status.get('path_fp')
+        if name == 'keep_editing':
+            self._ask_fp = None
+            return {'status': 'applied', 'next': 'click_and_edit'}
+        if not asked or self.status.get('state') not in ('PASSED', 'GENERATED', 'SELECTED'):
+            self._ask_fp = None
+            return {'status': 'failed', 'reason': 'not_asked'}
+        res = self._command_fresh('use_current_path')
+        if not res.get('accepted'):
+            return self._refusal(res)
+        self._ask_fp = None
+        if (res.get('status') or {}).get('state') == 'EXECUTING':
+            return {'status': 'moving'}
+        return {'status': 'validating', 'next': 'auto_run_if_passed'}
 
     def _motion(self, name: str) -> dict[str, Any]:
         if name == 'stop_motion':
@@ -293,20 +327,24 @@ def _announcement(ev: dict) -> str:
     data = ev.get('data') or {}
     if kind == 'validation':
         if ev.get('state') == 'PASSED':
-            return ''   # 자동 실행이 곧 시작되므로 실행 시작 알림으로 한 번만 말한다
+            # 계속 가·돌아가처럼 자동 실행이 예약된 검증이면 실행 시작 알림으로 한 번만 말한다
+            return '' if (ev.get('status') or {}).get('auto_run') else ASK_PASSED
         # 실패 항목은 이벤트 data가 아니라 상태(status.report)에 들어 있다
         failed = (((ev.get('status') or {}).get('report') or {}).get('failed_kinds') or [])
         reason = FAIL_REASON.get(failed[0], '') if failed else ''
         return '검증을 통과하지 못했어요.' + (f' {reason}.' if reason else '') + ' 실패한 곳을 화면에 빨간 점으로 표시했어요.'
     if kind == 'execution_start':
-        return '검증을 통과해서 이동을 시작할게요.'
+        return MOVE_START
     if kind == 'execution_end':
         if ev.get('state') != 'DONE' or data.get('next'):
-            return ''   # 멈춤: stop_motion 결과로 말하고 5초 뒤 묻는다 / 돌아가서 수정으로: back_to_edit에서 말한다
-        last = ((ev.get('status') or {}).get('last_exec') or {}).get('phase')
-        return ASK_ARRIVED if last == 'outbound' else ASK_HOME
+            return ''   # 멈춤: stop_motion 결과로 말하고 5초 뒤 묻는다 / 돌아가서 수정으로: back_to_edit에서 묻는다
+        last = ((ev.get('status') or {}).get('last_exec') or {})
+        if last.get('phase') != 'outbound':
+            return ASK_HOME
+        # 거꾸로 오던 길에서 멈추고 돌아가 목표 자리로 돌아왔으면 도착 인사 없이 다시 묻는다
+        return ASK_RETURN if last.get('kind') == 'return_reverse' else ASK_ARRIVED
     if kind == 'back_to_edit':
-        return BACK_TO_EDIT.get(data.get('which'), '')
+        return ASK_APPROVE   # 이미 검증을 통과한 길이라 앞말 없이 묻는다
     if kind == 'point_select' and actor == 'mouse':
         return ''   # 클릭은 화면 표시로 충분하다 (말하지 않는다)
     return ''

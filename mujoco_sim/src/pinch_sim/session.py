@@ -42,7 +42,7 @@ import numpy as np
 from .collision import CollisionChecker
 from .editing import PathEdit
 from .control import ComputedTorque, TrajectoryExecutor, controlled_step
-from .frames import WORLD, Pose, RobotState
+from .frames import DOWN, WORLD, Pose, RobotState
 from .kinematics import Kinematics
 from .model import RobotIndex, config_sha, ready_q
 from .paths import CartesianPath, PathGenerationError, initial_path, polyline_distance, return_path
@@ -126,6 +126,7 @@ class Session:
         self.return_edit: PathEdit | None = None          # its editing session (edited return only)
         self.return_goal: Goal | None = None
         self._saved_pointed: dict = {}                    # move kind -> (clicked point, its undo history)
+        self.ab: tuple[np.ndarray, TargetSpec] | None = None   # fixed A (end effector) and B (desk target)
         self._path_builder = None            # rebuilds the current kind of path from the robot state (regenerate)
         self.screen_axes: dict[str, np.ndarray] | None = None   # voice directions, set by the app from the camera
         self._actor, self._request_id = "sim", ""
@@ -276,6 +277,8 @@ class Session:
         if self.state in ("EXECUTING", "VALIDATING"):
             self._emit(f"N ignored in {self.state}", "refused")
             return False
+        if self.ab is not None:                       # fixed A/B: a "new target" is the same B again
+            return self._use_target(self.ab[1], d, extra="fixed A/B")
         st = self.robot_state(d)
         band, label = None, "start target"
         if count_as_new:
@@ -301,6 +304,31 @@ class Session:
                                 kind="new_target",
                                 attempts=res.attempts, new_press=self.new_presses if count_as_new else None,
                                 theta_band_deg=band)
+
+    def cmd_ab(self, a_world, b_world, d) -> tuple[bool, str]:
+        """Fixed A (end-effector position, world m) and B (target point on the desk, world m).
+
+        The robot is put at A (IK, tool pointing down) and the outbound path is A -> (rise) -> above B at the
+        approach height -> B + work height, the same rule as a generated target. Set before editing/running.
+        """
+        if self.state in ("EXECUTING", "VALIDATING"):
+            return False, f"busy ({self.state})"
+        tc = self.cfg["target"]
+        a, b = np.asarray(a_world, float), np.asarray(b_world, float)
+        ik = self.kin.solve_ik(a, DOWN, q_seed=self.q_ready)
+        if not ik.ok:
+            return False, (f"A {np.round(a, 3).tolist()} is not reachable with the tool pointing down "
+                           f"({ik.reason or 'IK'}: {ik.pos_err_m * 1000:.1f} mm, {ik.axis_err_deg:.1f} deg)")
+        d.qpos[self.idx.qpos] = ik.q
+        d.qvel[self.idx.dof] = 0.0
+        mujoco.mj_forward(self.m, d)
+        self.hold_q = ik.q.copy()
+        t = TargetSpec(float(np.hypot(b[0], b[1])), float(np.arctan2(b[0], b[1])), b.copy(),
+                       b + [0.0, 0.0, tc["work_height_m"]], b + [0.0, 0.0, tc["approach_height_m"]], DOWN.copy())
+        self.ab = (a.copy(), t)
+        self.target_label = "A/B"
+        ok = self._use_target(t, d, extra="fixed A/B")
+        return ok, "" if ok else self.message
 
     def cmd_fixed_target(self, r_m: float, theta_deg: float, d) -> bool:
         if self.state in ("EXECUTING", "VALIDATING"):
@@ -809,7 +837,8 @@ class Session:
                "pointed": self.pointed_index() is not None,
                "phase": self.phase,
                "last_exec": None if self.last_exec is None else
-               {"phase": self.last_exec["phase"], "status": self.last_exec["status"]},
+               {"phase": self.last_exec["phase"], "status": self.last_exec["status"],
+                "kind": self.last_exec.get("kind")},
                "can_undo": bool(ed is not None and ed.editor.can_undo),
                "can_redo": bool(ed is not None and ed.editor.can_redo),
                "validation_token": self._token,

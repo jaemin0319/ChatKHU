@@ -142,7 +142,9 @@ class Dispatcher:
                     return False, "NOT_ALLOWED", s.state
                 return s.cmd_return(d), "NO_PATH", ""
             if cmd == "use_current_path":
-                return self._use_current_path(s, d, rid)
+                # auto_run false ("수정 완료"): validate only - the user is asked before it moves (approve = again
+                # with auto_run true). auto_run true: run as soon as this exact path passes.
+                return self._use_current_path(s, d, rid, auto_run=req.get("auto_run", True) is not False)
             if cmd == "move_point":
                 return self._move_point(s, req)
             if cmd in ("return_reverse", "edit_return"):
@@ -187,15 +189,19 @@ class Dispatcher:
         return done, code or "REFUSED", {"moved_cm": round(moved * 100, 1), "index": int(k)}
 
     @staticmethod
-    def _use_current_path(s, d, rid):
+    def _use_current_path(s, d, rid, auto_run=True):
         st = s.state
         if st == "GENERATED":
             if not s.cmd_select():
                 return False, "REFUSED", s.message
             st = s.state
         if st == "SELECTED":
+            if not auto_run:
+                return s.cmd_validate(d), "REFUSED", "validating; asks before moving"
             ok = s.cmd_validate(d, auto_run_request=rid)
             return ok, "REFUSED", "validating; runs automatically only if this exact path passes"
+        if not auto_run and st in ("VALIDATING", "PASSED"):
+            return True, "", "validating" if st == "VALIDATING" else "passed; waiting for approval"
         if st == "VALIDATING":
             if s.auto_run is not None:
                 return False, "ALREADY_REQUESTED", "already booked for this validation"

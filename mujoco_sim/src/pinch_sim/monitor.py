@@ -12,6 +12,8 @@ Frame sources:
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import cv2
 import mujoco
 import numpy as np
@@ -87,8 +89,15 @@ def _dot(img, cam, p, radius: int, bgr, outline=(0, 0, 0)) -> tuple | None:
     return tuple(uv[0])
 
 
-def draw_overlay_2d(img: np.ndarray, cam: CameraModel, ov: Overlay, line_px: int = 3) -> np.ndarray:
-    """Draw the overlay in place on a BGR frame of size cam.width x cam.height."""
+def draw_overlay_2d(img: np.ndarray, cam: CameraModel, ov: Overlay, line_px: int = 3,
+                    minimal: bool = False) -> np.ndarray:
+    """Draw the overlay in place on a BGR frame of size cam.width x cam.height.
+
+    minimal (real camera image): only the path and what the user edits (reference path, picked / dragged
+    point, highest point, failures); no target ring, approach / goal markers or the simulated TCP.
+    """
+    if minimal:
+        ov = replace(ov, floor_point=None, approach=None, tcp_goal=None, goal_axis=None, tcp=None)
     if ov.floor_point is not None:                           # floor marker: projected circle on z = 0
         a = np.linspace(0, 2 * np.pi, 32)
         ring = ov.floor_point + 0.022 * np.column_stack([np.cos(a), np.sin(a), np.zeros_like(a)])

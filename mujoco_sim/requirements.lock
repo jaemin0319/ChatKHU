@@ -11,6 +11,7 @@ pillow==11.3.0  # side_cam monitor text (Korean) via ui.py
 pluggy==1.6.0
 Pygments==2.21.0
 PyOpenGL==3.1.10
+PyYAML==6.0.3  # canvas: read the camera calibration (pac_vision cam2base.yaml)
 pytest==9.1.1
 scipy==1.17.1
 typing_extensions==4.16.0

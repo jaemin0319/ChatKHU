@@ -175,3 +175,31 @@ def test_edited_return_stop_back_returns_to_return_editing_and_save(scene, cfg, 
     import json
     saved = json.loads(open(r["detail"]["file"]).read())
     assert saved["outbound"]["path_id"] == "to_target" and saved["return"]["edits"] == 1
+
+
+def test_finish_edit_validates_only_and_waits_for_approval(scene, cfg, data):
+    """수정 완료 = validate only (auto_run false); it moves only after the approval (auto_run true)."""
+    s = _setup(scene, cfg, data)
+    _drag(s, 0.02)
+    r = _cmd(s, data, "use_current_path", "done", auto_run=False)
+    assert r["accepted"] and s.auto_run is None
+    s.watch(data)
+    assert s.state == "PASSED"
+    for _ in range(5):                                          # nothing booked: it keeps waiting
+        s.watch(data)
+    assert s.state == "PASSED"
+    r = _cmd(s, data, "use_current_path", "done-again", auto_run=False)
+    assert r["accepted"] and s.state == "PASSED"                # 수정 완료 twice is not an approval
+    r = _cmd(s, data, "use_current_path", "approve")
+    assert r["accepted"] and s.state == "EXECUTING"
+    _run_to_end(s, data)
+    assert s.state == "DONE" and s.last_run["path_source"] == "edited"
+
+
+def test_more_editing_after_passed_needs_a_new_validation(scene, cfg, data):
+    s = _setup(scene, cfg, data)
+    assert _cmd(s, data, "use_current_path", "done", auto_run=False)["accepted"]
+    s.watch(data)
+    assert s.state == "PASSED"
+    _drag(s, 0.02)                                              # 더 고칠래 -> edit again
+    assert s.state == "GENERATED" and s.report is None
