@@ -12,8 +12,8 @@ and offers the small CameraModel interface the monitor, the mouse / hand picking
 (width, height, project, pixel_ray, scaled_to). World is the simulator frame; base is converted with
 canvas.CAL_FROM_WORLD (base_ref: +X forward, +Y left, +Z up).
 
-pac_vision is imported from the `src` folder next to the calibration file (pac_vision/config/cam2base.yaml ->
-pac_vision/src), or from $PAC_VISION_SRC.
+pac_vision is imported from $PAC_VISION_SRC, the `src` folder next to the calibration file
+(pac_vision/config/cam2base.yaml -> pac_vision/src), or a pac_vision folder next to mujoco_sim.
 """
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ def is_pac_vision_file(path: str | Path) -> bool:
 
 def _import_pac_vision(calib: Path):
     candidates = [os.environ.get("PAC_VISION_SRC"), calib.resolve().parent.parent / "src",
+                  Path(__file__).resolve().parents[3] / "pac_vision" / "src",          # pac_vision next to mujoco_sim
                   Path.home() / "research/manipulator/26_project_manipulator/pac_vision/src"]
     for c in candidates:
         if c and (Path(c) / "pac_vision" / "cam2base.py").exists():
@@ -88,6 +89,26 @@ class PacVisionCamera:
             pts.append(cal_to_world(self.conv.camera_to_base(p_cam)))
         o, d = pts[0], pts[1] - pts[0]
         return o, d / np.linalg.norm(d)
+
+    def depth_z(self, u: float, v: float, depth_mm, half: int = 3, percentile: float = 25.0) -> float | None:
+        """Optical Z (m) of what is seen at colour pixel (u, v): the RGB->depth registration iterated on the
+        depth there (pac_vision's rgb_to_depth_on_depth), then the low percentile of the depth patch.
+        None outside the depth image, without valid depth, or outside the camera's range (min_m, max_m)."""
+        from .hand_depth import patch_depth
+        cam = self.conv.cam
+        ud, vd = cam.rgb_to_depth_on_depth(u, v, depth_mm, half, self._size, self.mirrored)
+        z_mm = patch_depth(depth_mm, float(np.ravel(ud)[0]), float(np.ravel(vd)[0]), half, percentile)
+        if z_mm <= 0:
+            return None
+        z = float(cam.depth_m(z_mm))
+        return z if cam.min_m <= z <= cam.max_m else None
+
+    def point_at_z(self, u: float, v: float, z_m: float) -> np.ndarray:
+        """World point on colour pixel (u, v)'s line of sight at optical Z = z_m."""
+        cam = self.conv.cam
+        ud, vd = cam.rgb_to_depth(u, v, self._size, self.mirrored, z_m=z_m)
+        p_cam = cam.ray(float(np.ravel(ud)[0]), float(np.ravel(vd)[0])) * z_m
+        return cal_to_world(np.asarray(self.conv.camera_to_base(p_cam), float).reshape(3))
 
     def desk_point(self, u: float, v: float) -> np.ndarray:
         """The desk point (z = 0) seen at a colour pixel, world (pac_vision's pixel_to_desk)."""

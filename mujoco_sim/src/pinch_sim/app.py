@@ -282,7 +282,24 @@ def main(argv=None):
                     help="where the user stands around the robot; voice directions (right, away, ...) are fixed "
                          "to the calibration axes as seen from there (default right: at -Y, facing +Y, "
                          "so right = +X, away = +Y)")
+    ap.add_argument("--robot-pose", metavar="X,Y,YAW_DEG",
+                    help="where the robot base centre stands in the calibration frame (m on the desk) and which "
+                         "way it faces (deg, counter-clockwise from +X seen from above); default 0,0,0 = on the "
+                         "calibration origin facing +X")
+    ap.add_argument("--depth", action="store_true",
+                    help="Astra depth (pac_vision, OpenNI2) for the hand: a pinch moves the grabbed point by the "
+                         "hand's 3-D motion, 1:1 (needs --hand, --video and a real pac_vision --calib)")
     a = ap.parse_args(argv)
+    if a.robot_pose:
+        from .canvas import set_robot_pose
+        try:
+            rx, ry, ryaw = [float(v) for v in a.robot_pose.split(",")]
+        except ValueError:
+            ap.error("--robot-pose: X,Y,YAW_DEG (three numbers)")
+        set_robot_pose(rx, ry, ryaw)
+        print(f"robot base in the calibration frame: x={rx:.3f} y={ry:.3f} m, facing {ryaw:.1f} deg", flush=True)
+    if a.depth and (a.hand is None or not a.video or not a.calib):
+        ap.error("--depth needs --hand, --video (the Astra colour camera) and --calib (pac_vision cam2base.yaml)")
 
     cfg = load_config()
     if a.work_height is not None:
@@ -402,13 +419,27 @@ def main(argv=None):
     # (not the camera image, so moving the camera or re-calibrating does not turn "right" around)
     from .canvas import user_axes
     session.screen_axes = user_axes(a.user_side)
-    hand_ctrl = hand_editor = None
+    hand_ctrl = hand_editor = depth_src = None
     if a.hand is not None:
+        from . import hand_input
         from .hand_input import HandCamera, HandConfig, HandController
+        hand_input._USER_SIDE[0] = a.user_side
         hcfg = HandConfig(camera=a.hand, mirror=hand_cam is None)       # a separate webcam is a mirror view
         if hand_cam is None:
             hand_cam = HandCamera(hcfg)
-        hand_ctrl = HandController(hcfg)
+        hand_depth = None
+        if a.depth:
+            from .hand_depth import AstraDepthSource, HandDepth
+            from .pac_calib import PacVisionCamera
+            if not isinstance(cam_model, PacVisionCamera):
+                ap.error("--depth needs a real pac_vision calibration (--calib .../pac_vision/config/cam2base.yaml)")
+            try:
+                depth_src = AstraDepthSource(a.calib)
+            except Exception as exc:          # noqa: BLE001 - OpenNI / device errors: say what failed
+                ap.error(f"Astra depth did not open: {exc}")
+            hand_depth = HandDepth(cam_model)
+            print("hand depth: Astra (pinch = 3-D move, 1:1)", flush=True)
+        hand_ctrl = HandController(hcfg, depth=hand_depth)
         hand_editor = MouseEditor(cam_model, cfg, layout.scale)      # same geometry as the mouse ...
         hand_editor.radius = hcfg.select_radius_px                  # ... with a wider pick radius
         print(f"hand input: camera {a.hand} (point = select, pinch = drag)", flush=True)
@@ -509,7 +540,7 @@ def main(argv=None):
                     draw_preview(img, hframe, lm, layout.top_h)
                 hand_ctrl.draw(img, layout.top_h, cam_model, layout.scale,
                                landmarks=lm if shared and not a.no_hand_preview else None,
-                               img_wh=(layout.img_w, layout.img_h))
+                               img_wh=(layout.img_w, layout.img_h), text=ui.text)
             cv2.imshow(WIN, img)
             if snap_dir and session.state != last_state:
                 cv2.imwrite(str(snap_dir / f"f{frame:05d}_{session.state}.png"), img)
@@ -553,9 +584,13 @@ def main(argv=None):
             if hand_ctrl is not None:        # hand: same MouseEditor and Session methods as the mouse
                 lm, t_hand, cw, ch, _ = hand_cam.latest()
                 t_now = time.monotonic()
+                depth_mm = None
+                if depth_src is not None:
+                    depth_mm, t_depth = depth_src.latest()
+                    depth_mm = depth_mm if t_now - t_depth < 0.3 else None
                 with session.acting("hand"):
                     hand_ctrl.step(lm if t_now - t_hand < 0.3 else None, t_now, cw, ch,
-                                   layout.img_w, layout.img_h, hand_editor, session, d)
+                                   layout.img_w, layout.img_h, hand_editor, session, d, depth_mm=depth_mm)
             if gateway is not None:          # voice requests: same thread, same Session methods, after keys
                 gateway.drain(session, d)
             if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
@@ -564,6 +599,8 @@ def main(argv=None):
         gateway.close()
     if hand_cam is not None:
         hand_cam.close()
+    if depth_src is not None:
+        depth_src.close()
     session.close()
     cv2.destroyAllWindows()
     summary = {"frames": frame, "lag_resets": lag_resets, "final_state": session.state, "last_run": session.last_run,

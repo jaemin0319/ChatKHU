@@ -672,18 +672,22 @@ class Session:
         self._set("GENERATED", msg + "; validation/approval cleared - S, V, Y again", kind,
                   edits=int(self.path.meta.get("edits", 0)), **data)
 
-    def edit_begin(self, index: int, control_point) -> bool:
+    def edit_begin(self, index: int, control_point, free: bool = False) -> bool:
+        """free=False: the point moves on its vertical line (mouse, 2-D hand). free=True: in 3-D (pinch + depth)."""
         ok, why = self.can_edit()
         if not ok:
             self._emit(f"edit refused: {why}", "refused")
             return False
-        if not self.edit.begin(index, control_point):
+        if not self.edit.begin(index, control_point, free=free):
             self._emit(f"edit not started: {self.edit.message}", "refused")
             return False
-        ax, ay = self.edit.anchor_xy
         self._drag_prev_pointed = None if self.pointed is None else self.pointed.copy()
         self.edit_mode = True
-        self._edited(f"dragging point {index} vertically at x={ax:.3f} y={ay:.3f} m (height only)", "edit_begin")
+        if free:
+            self._edited(f"dragging point {index} in 3-D (hand)", "edit_begin")
+        else:
+            ax, ay = self.edit.anchor_xy
+            self._edited(f"dragging point {index} vertically at x={ax:.3f} y={ay:.3f} m (height only)", "edit_begin")
         return True
 
     def edit_update(self, control_point) -> bool:

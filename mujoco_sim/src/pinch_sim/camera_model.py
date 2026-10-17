@@ -107,6 +107,19 @@ class CameraModel:
         d = self.R_cw.T @ d_cam
         return self.center_world, d / np.linalg.norm(d)
 
+    # depth image registered to this image (same size, same pixels): the mock calibration and tests
+    def depth_z(self, u: float, v: float, depth_mm, half: int = 3, percentile: float = 25.0) -> float | None:
+        """Optical Z (m) at pixel (u, v) of a depth image registered to this camera (mm), or None."""
+        from .hand_depth import patch_depth
+        z_mm = patch_depth(depth_mm, u, v, half, percentile)
+        return z_mm / 1000.0 if z_mm > 0 else None
+
+    def point_at_z(self, u: float, v: float, z_m: float) -> np.ndarray:
+        """World point on pixel (u, v)'s line of sight at optical Z = z_m."""
+        xy = cv2.undistortPoints(np.array([[[u, v]]], float), self.K, self.dist).reshape(2)
+        p_cam = np.array([xy[0], xy[1], 1.0]) * z_m
+        return self.R_cw.T @ (p_cam - self.t_cw)
+
 
 def main():
     """Export the sim camera as a calibration file (shows the format; usable with --monitor-calib)."""

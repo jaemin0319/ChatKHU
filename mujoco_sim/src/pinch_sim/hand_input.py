@@ -7,8 +7,14 @@ The hand stands in for the mouse on the monitor image, so it goes through the sa
     hold it still for `point_dwell_s` -> the nearest path point is selected (= a mouse click).
     The fingertip is drawn as a dot.
   * pinch (thumb tip and index tip together): the midpoint of the two tips is drawn as a circle
-    (like the path editor's webcam demo). Closing the pinch near a path point grabs it, moving the
-    pinch drags it, opening the pinch releases it (= mouse press / move / release).
+    (like the path editor's webcam demo). Closing the pinch near a path point grabs the point nearest to it
+    on the screen (2-D), moving the pinch drags it, opening the pinch releases it.
+      - with a depth camera (`HandController(depth=HandDepth(...))`): the grabbed point follows the hand's
+        3-D motion since the pinch closed, 1:1 (hand_depth.py). The path changes only after the hand moved
+        `start_m`; a pinch opened before that only selects the point (like a click).
+      - without depth: like the mouse - the point moves on its vertical line under the pinch (height only).
+  * anything in between (thumb neither on the index tip nor clearly away) does nothing, so pointing never
+    turns into a grab on the way to a pinch and the other way round.
 
 Rules taken from the path editor's HandInput (path 편집/src/pac_path_editor/webcam.py):
   * pinch hysteresis: closed below `pinch_close`, open above `pinch_open` (thumb-index distance over
@@ -16,8 +22,7 @@ Rules taken from the path editor's HandInput (path 편집/src/pac_path_editor/we
   * a new pinch only after an open hand (release-to-arm);
   * losing the hand is not a release: the drag preview freezes and is cancelled after `loss_timeout_s`.
 
-Now a webcam gives only the 2-D position on the monitor; with the Astra camera the depth at the pinch
-(relative 3-D motion) goes into the same place later. Camera and MediaPipe run in their own thread.
+Camera and MediaPipe run in their own thread; the Astra depth too (hand_depth.AstraDepthSource).
 """
 from __future__ import annotations
 
@@ -88,8 +93,10 @@ def classify(landmarks, w: int, h: int, pinched: bool, cfg: HandConfig) -> Gestu
 class HandController:
     """Gestures -> MouseEditor calls (main thread). Camera independent, so it can be tested."""
 
-    def __init__(self, cfg: HandConfig):
+    def __init__(self, cfg: HandConfig, depth=None):
         self.cfg = cfg
+        self.depth = depth            # HandDepth: pinch moves the point in 3-D; None: height only (2-D)
+        self.grab3d: dict | None = None   # {"k", "p0" world point, "h0" hand point, "started"} during a 3-D pinch
         self.pinched = False          # hysteresis state of the hand pose
         self.armed = False            # an open hand was seen since the last pinch / loss
         self.grabbing = False         # a press was sent to the MouseEditor
@@ -107,7 +114,8 @@ class HandController:
         return now - self._pending_since + 1e-12 >= self.cfg.debounce_s
 
     def step(self, landmarks, now: float, cam_w: int, cam_h: int, img_w: int, img_h: int,
-             mouse_editor, session, d) -> None:
+             mouse_editor, session, d, depth_mm=None) -> None:
+        """depth_mm: the newest depth frame (with `depth`), None without a depth camera."""
         cfg = self.cfg
         g = classify(landmarks, cam_w, cam_h, self.pinched, cfg) if landmarks is not None else None
         self.gesture = g
@@ -118,6 +126,7 @@ class HandController:
             if self.grabbing and now - self._missing_since >= cfg.loss_timeout_s:
                 mouse_editor.cancel(session)
                 self.grabbing = self.pinched = False
+                self.grab3d = None
             return
         self._missing_since = None
         self.hover = None
@@ -131,21 +140,30 @@ class HandController:
         x, y = self.cursor_px
 
         is_pinch = g.kind == "pinch"
+        lm_px = None if self.depth is None else _px(landmarks, cam_w, cam_h)
+        hand = None
+        if self.depth is not None:                        # measured only while the fingers are together
+            hand = self.depth.update(lm_px if is_pinch else None, depth_mm, now)
         if is_pinch != self.pinched and self._stable("pinch" if is_pinch else "release", now):
             self.pinched = is_pinch
             if is_pinch:
-                if self.armed:                            # grab the nearest path point (mouse press)
-                    self.grabbing = bool(mouse_editor.press(session, d, x, y))
+                if self.armed:                            # grab the point nearest to the pinch on the screen
+                    self.grabbing = self._grab(mouse_editor, session, d, x, y)
                 self.armed = False
-            elif self.grabbing:                           # open the pinch: release (mouse release)
-                mouse_editor.release(session, d)
+            elif self.grabbing:                           # open the pinch: release
+                self._release(mouse_editor, session, d)
                 self.grabbing = False
         elif is_pinch == self.pinched:
             self._pending = None
-        if not self.pinched and not is_pinch:          # a hand actually seen open (release-to-arm)
+        if not self.pinched and not is_pinch:          # a hand seen not pinching (release-to-arm)
             self.armed = True
-        if self.pinched and self.grabbing:
-            mouse_editor.move(session, d, x, y)
+            if self.depth is not None:
+                self.depth.reset()
+        if self.pinched and self.grabbing and is_pinch:   # an opening hand (thumb leaving) moves nothing
+            if self.grab3d is not None:
+                self._move3d(session, hand)
+            else:
+                mouse_editor.move(session, d, x, y)
 
         if not self.grabbing and session.path is not None and session.can_edit()[0]:
             from .screen import pick_index
@@ -164,7 +182,53 @@ class HandController:
         else:
             self._dwell_xy = None
 
-    def draw(self, img, top_h: int, cam=None, scale: float = 1.0, landmarks=None, img_wh=None) -> None:
+    # ------------------------------------------------------------------ pinch: grab / move / release
+    def _grab(self, mouse_editor, session, d, x, y) -> bool:
+        """3-D when the depth camera sees the pinching fingers now, else the 2-D (vertical line) drag."""
+        if self.depth is None or self.depth.out is None:
+            self.grab3d = None
+            return bool(mouse_editor.press(session, d, x, y))
+        ok, why = session.can_edit()
+        if not ok:
+            session._emit(f"edit refused: {why}")
+            return False
+        from .screen import pick_index
+        k = pick_index(session.path.points_m, mouse_editor.cam, x / mouse_editor.scale, y / mouse_editor.scale,
+                       mouse_editor.radius)
+        if k is None:
+            session._emit(f"no interior path point within {mouse_editor.radius:.0f} px of the pinch")
+            return False
+        self.grab3d = {"k": k, "p0": session.path.points_m[k].copy(), "h0": self.depth.out.copy(), "started": False}
+        return True
+
+    def _move3d(self, session, hand) -> None:
+        g, c = self.grab3d, self.depth.cfg
+        if hand is None:
+            return                                         # no depth this frame: the preview stays
+        delta = hand - g["h0"]                             # the hand's own motion since the pinch closed, 1:1
+        n = float(np.linalg.norm(delta))
+        if n > c.max_move_m:
+            delta *= c.max_move_m / n
+        if not g["started"]:
+            if n < c.start_m:
+                return
+            if not session.edit_begin(g["k"], g["p0"], free=True):
+                self.grab3d, self.grabbing = None, False
+                return
+            g["started"] = True
+        g["delta"] = delta
+        session.edit_update(g["p0"] + delta)
+
+    def _release(self, mouse_editor, session, d) -> None:
+        g, self.grab3d = self.grab3d, None
+        if g is None:
+            mouse_editor.release(session, d)
+        elif g["started"]:
+            session.edit_end()
+        else:
+            session.point_select(g["k"])                   # pinched without moving: select it, like a click
+
+    def draw(self, img, top_h: int, cam=None, scale: float = 1.0, landmarks=None, img_wh=None, text=None) -> None:
         """Cursor on the monitor window: a dot for pointing, a circle for pinching.
 
         cam/scale: also ring the path point the finger would take now (hover). landmarks: the hand is in
@@ -187,15 +251,58 @@ class HandController:
         cx, cy = int(round(self.cursor_px[0])), int(round(self.cursor_px[1] + top_h))
         if self.gesture.kind == "pinch" or self.pinched:
             color = (0, 215, 255) if self.grabbing else (255, 255, 255)
+            if self.depth is not None and self.depth.out is None:
+                color = (60, 60, 230)                      # no depth at the fingers: 3-D move not available
             cv2.circle(img, (cx, cy), 16, (0, 0, 0), 4, cv2.LINE_AA)
             cv2.circle(img, (cx, cy), 16, color, 2, cv2.LINE_AA)
             cv2.circle(img, (cx, cy), 3, color, -1, cv2.LINE_AA)
+            if text is not None:
+                self._draw_text(img, text, cx + 22, cy - 12)
         elif self.gesture.kind == "point":
             done = self._dwell_done
             cv2.circle(img, (cx, cy), 7, (0, 0, 0), -1, cv2.LINE_AA)
             cv2.circle(img, (cx, cy), 5, (0, 215, 255) if done else (255, 200, 0), -1, cv2.LINE_AA)
         else:
             cv2.circle(img, (cx, cy), 5, (200, 200, 200), 1, cv2.LINE_AA)
+
+
+    def status_line(self) -> str:
+        """Short Korean line next to the pinch: how far the grabbed point moved, or why depth is missing."""
+        if self.depth is None:
+            return ""
+        g = self.grab3d
+        if g is not None and g.get("started") and "delta" in g:
+            return "옮기는 중 " + _delta_text(g["delta"])
+        if self.depth.out is None:
+            return "깊이 없음: 카메라에서 더 멀리"
+        return "집기" if self.grabbing else ""
+
+    def _draw_text(self, img, text, x, y) -> None:
+        s = self.status_line()
+        if not s:
+            return
+        from .ui import blit
+        spr = text.sprite(s, 18, (255, 255, 255))
+        h, w = spr.shape[:2]
+        x = int(min(max(0, x), img.shape[1] - w - 4))
+        y = int(min(max(0, y), img.shape[0] - h - 4))
+        cv2.rectangle(img, (x - 4, y - 2), (x + w + 4, y + h + 2), (30, 30, 30), -1)
+        blit(img, spr, x, y)
+
+
+def _delta_text(delta_world) -> str:
+    """World displacement -> e.g. "위 2.3 · 오른쪽 1.0 cm" along the user's axes (largest first, >= 0.5 cm)."""
+    from .canvas import user_axes
+    ax = user_axes(_USER_SIDE[0])
+    parts = []
+    for pos, neg, key in (("위", "아래", "up"), ("오른쪽", "왼쪽", "right"), ("저쪽", "내 쪽", "away")):
+        c = float(np.dot(delta_world, ax[key])) * 100
+        if abs(c) >= 0.5:
+            parts.append((abs(c), f"{pos if c > 0 else neg} {abs(c):.1f}"))
+    return " · ".join(t for _, t in sorted(parts, reverse=True)) + " cm" if parts else "0 cm"
+
+
+_USER_SIDE = ["right"]      # set by the app from --user-side (for the displayed directions only)
 
 
 class HandCamera:

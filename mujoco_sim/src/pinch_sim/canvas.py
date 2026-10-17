@@ -6,7 +6,13 @@ camera.rgb width/height). The base frame of that file ("calibration frame") is R
 base_ref: origin = robot base centre on the desk, +X forward, +Y left, +Z up. A, B and the drawn axes use
 it. Inside, the simulator keeps its own world (+Y forward), so points are converted once:
 
-    p_cal = CAL_FROM_WORLD @ p_world      (x_cal = y_world, y_cal = -x_world, z the same)
+    p_cal = R_robot @ CAL_FROM_WORLD @ p_world + t_robot      (x_cal = y_world, y_cal = -x_world, z the same,
+                                                               when the robot stands at the origin)
+
+The simulator world is the robot (its base centre on the desk, +Y = robot forward). When the real robot does not
+stand on the calibration origin facing +X, `set_robot_pose(x, y, yaw_deg)` gives where its base centre is and
+which way it faces in the calibration frame (R_robot = yaw about +Z, t_robot = (x, y, 0)); everything drawn or
+picked through these functions follows. Directions (voice axes, hand motion) use the rotation only.
 
 Until the real calibration is done, `write_mock_cam2base` writes the same kind of file from the simulator
 camera (configs/cam2base_mock.yaml). Replacing it with the real file is the only change needed later.
@@ -24,6 +30,19 @@ from .camera_model import CameraModel
 
 CAL_FROM_WORLD = np.array([[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
 WORLD_FROM_CAL = CAL_FROM_WORLD.T
+_pose = {"R": CAL_FROM_WORLD.copy(), "t": np.zeros(3), "xyyaw": (0.0, 0.0, 0.0)}   # world -> calibration frame
+
+
+def set_robot_pose(x: float = 0.0, y: float = 0.0, yaw_deg: float = 0.0) -> None:
+    """Robot base centre (x, y on the desk, m) and heading (deg, counter-clockwise from +X seen from above) in
+    the calibration frame. (0, 0, 0) = the robot stands on the calibration origin facing +X."""
+    c, s = np.cos(np.radians(yaw_deg)), np.sin(np.radians(yaw_deg))
+    yaw = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+    _pose["R"], _pose["t"], _pose["xyyaw"] = yaw @ CAL_FROM_WORLD, np.array([x, y, 0.0]), (x, y, yaw_deg)
+
+
+def robot_pose() -> tuple[float, float, float]:
+    return _pose["xyyaw"]
 
 AXIS_LEN_M = 0.10
 AXIS_COLORS = ((40, 40, 230), (40, 170, 40), (230, 90, 30))     # BGR: x red, y green, z blue
@@ -42,23 +61,32 @@ USER_SIDES = {
 def user_axes(side: str) -> dict[str, np.ndarray]:
     """Voice directions fixed to the calibration axes, as the user standing at `side` sees them (world)."""
     right_c, away_c = USER_SIDES[side]
-    right, away, up = cal_to_world(right_c), cal_to_world(away_c), cal_to_world((0.0, 0.0, 1.0))
+    right, away, up = cal_dir_to_world(right_c), cal_dir_to_world(away_c), cal_dir_to_world((0.0, 0.0, 1.0))
     return {"up": up, "down": -up, "right": right, "left": -right, "away": away, "toward_me": -away}
 
 
 def user_view(side: str) -> tuple[np.ndarray, float, float, float]:
     """MuJoCo free-camera (lookat, distance, azimuth, elevation) from where the user stands."""
     away = user_axes(side)["away"]
-    lookat = cal_to_world((0.18, 0.0, 0.12))                     # middle of the work area
+    lookat = np.array([0.0, 0.18, 0.12])                          # middle of the work area, in front of the robot
     return lookat, 1.15, float(np.degrees(np.arctan2(away[1], away[0]))), -25.0
 
 
 def cal_to_world(p) -> np.ndarray:
-    return np.asarray(p, float) @ WORLD_FROM_CAL.T
+    return (np.asarray(p, float) - _pose["t"]) @ _pose["R"]
 
 
 def world_to_cal(p) -> np.ndarray:
-    return np.asarray(p, float) @ CAL_FROM_WORLD.T
+    return np.asarray(p, float) @ _pose["R"].T + _pose["t"]
+
+
+def cal_dir_to_world(v) -> np.ndarray:
+    """A direction / displacement (no translation)."""
+    return np.asarray(v, float) @ _pose["R"]
+
+
+def world_dir_to_cal(v) -> np.ndarray:
+    return np.asarray(v, float) @ _pose["R"].T
 
 
 def load_cam2base(path: str | Path) -> CameraModel:
@@ -70,9 +98,9 @@ def load_cam2base(path: str | Path) -> CameraModel:
     w, h = int(rgb.get("width", intr.get("width", 640))), int(rgb.get("height", intr.get("height", 480)))
     K = np.array([[intr.get("fx", 570.0), 0, intr.get("cx", w / 2)], [0, intr.get("fy", 570.0), intr.get("cy", h / 2)],
                   [0, 0, 1]], float)
-    # p_cam = R^T (p_cal - t),  p_cal = CAL_FROM_WORLD p_world
-    R_cw = R.T @ CAL_FROM_WORLD
-    t_cw = -R.T @ t
+    # p_cam = R^T (p_cal - t),  p_cal = R_robot p_world + t_robot
+    R_cw = R.T @ _pose["R"]
+    t_cw = R.T @ (_pose["t"] - t)
     return CameraModel(K, np.zeros(5), w, h, R_cw, t_cw, f"cam2base:{Path(path).name}")
 
 
