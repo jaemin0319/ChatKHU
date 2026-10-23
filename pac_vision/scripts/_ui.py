@@ -20,6 +20,7 @@ BLUE, CYAN, PURPLE, BLACK = (255, 0, 0), (255, 255, 0), (200, 0, 200), (0, 0, 0)
 
 PANEL_MIN_W = 900       # 문구 패널 최소 폭 (영상 640 px보다 긴 줄이 잘리지 않게)
 ENTER_KEYS = (13, 10)   # ⚠️ 창 백엔드(GTK/Qt)에 따라 Enter 코드가 13 또는 10
+opened_rgb_device: int | None = None   # open_rgb가 실제로 연 /dev/videoN 번호 (보정 파일에 카메라 신원으로 남긴다)
 
 
 def log(msg: str):
@@ -199,6 +200,8 @@ def open_rgb(camera_cfg):
             size = (frame.shape[1], frame.shape[0])
             if size != (int(r["width"]), int(r["height"])):
                 log(f"[pac_vision] ⚠️ RGB 요청 {r['width']}x{r['height']} → 실제 {size[0]}x{size[1]}")
+            global opened_rgb_device
+            opened_rgb_device = dev
             return cap, size
         cap.release()
     sys.exit(f"[pac_vision] RGB 카메라를 열지 못했습니다 (시도한 장치 {devices}). 다른 프로그램이 쓰는 중인지 "

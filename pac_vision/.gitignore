@@ -10,6 +10,9 @@ dist/
 config/cam2base.yaml
 config/local.yaml
 config/pose.yaml
+config/markers.yaml
+config/markers.check.yaml
+config/robot_pose.yaml
 data/sessions/*
 !data/sessions/.gitkeep
 # YOLO 가중치 (실행 시 자동으로 내려받음)

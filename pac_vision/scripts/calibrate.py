@@ -19,6 +19,7 @@ from pac_vision import AstraDepth
 from pac_vision.cam2base import (Cam2Base, CalibrationError, CameraModel, average_depth, clip_roi,
                                  fit_desk_plane_near, patch_median, roi_points, solve_calibration)
 from pac_vision.config import has_pose
+from pac_vision.devices import rgb_identity
 from pac_vision.session import (MissingCalibration, calibration_matches_current, compare_summaries, replay_session,
                                 require_cam2base,
                                 save_session, write_cam2base)
@@ -344,8 +345,10 @@ def save_all(cfg_dir, res, rgb, depth, rgb_size, configs, layout):
         session = sess_dir / f"{now:%Y-%m-%d_%H%M%S}.npz"
     save_session(session, rgb, depth, res.clicks_rgb, rgb_size, res.mode, configs, res.summary(), created)
     rel = session.relative_to(cfg_dir.parent) if session.is_relative_to(cfg_dir.parent) else session
-    write_cam2base(cfg_dir / "cam2base.yaml", res, configs["camera"], session_file=str(rel), created=created)
-    log(f"[저장] {cfg_dir.name}/cam2base.yaml  (R, t, 날짜, depth 모드, 검사 결과)")
+    ident = None if _ui.opened_rgb_device is None else rgb_identity(_ui.opened_rgb_device)
+    write_cam2base(cfg_dir / "cam2base.yaml", res, configs["camera"], session_file=str(rel), created=created,
+                   camera_identity=ident)
+    log(f"[저장] {cfg_dir.name}/cam2base.yaml  (R, t, 날짜, depth 모드, 검사 결과, 카메라 신원)")
     log(f"[저장] {rel}  (RGB, depth, 클릭 5점)")
     rc = int(layout["recheck_corner"])
     p = layout["corners"][rc - 1]

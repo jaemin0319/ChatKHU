@@ -78,8 +78,10 @@ def compare_summaries(a: dict, b: dict, keys=("R", "t", "camera_points", "holdou
 
 
 def write_cam2base(path, result: CalibResult, camera_cfg: dict, session_file: str | None = None,
-                   created: str | None = None) -> Path:
-    """보정 결과 yaml. 계산에 쓴 카메라 설정 사본을 같이 넣어, 나중에 camera.yaml이 바뀌어도 같은 변환을 쓴다."""
+                   created: str | None = None, camera_identity: dict | None = None) -> Path:
+    """보정 결과 yaml. 계산에 쓴 카메라 설정 사본을 같이 넣어, 나중에 camera.yaml이 바뀌어도 같은 변환을 쓴다.
+
+    camera_identity: 보정에 쓴 RGB 장치의 신원(devices.rgb_identity). 시뮬레이터가 실행할 때 지금 카메라와 비교한다."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     s = result.summary()
@@ -99,6 +101,8 @@ def write_cam2base(path, result: CalibResult, camera_cfg: dict, session_file: st
         "session_file": session_file,
         "camera": camera_cfg,
     }
+    if camera_identity:
+        doc["camera_identity"] = dict(camera_identity)
     header = ("# 카메라 → base_ref 보정 결과 (calibrate.py가 생성). P_base = R @ P_cam + t, 단위 m.\n"
               "# 현장 전용 값이라 git에 올리지 않는다. 형식은 cam2base.example.yaml 참고.\n")
     with open(path, "w", encoding="utf-8") as f:
@@ -140,4 +144,23 @@ def calibration_matches_current(conv: Cam2Base, current_camera_cfg: dict) -> boo
     cur = CameraModel.from_config(current_camera_cfg)
     a, b = rgb_depth_key(conv.cam), rgb_depth_key(cur)
     return a[:2] == b[:2] and all(abs(x - y) < 1e-9 for x, y in zip(a[2] + a[3], b[2] + b[3]))
+
+
+def calibration_mismatches(conv: Cam2Base, current_camera_cfg: dict) -> list[str]:
+    """보정 때 카메라 설정 사본과 지금 설정의 차이 (빈 목록 = 같음).
+
+    정합 계수뿐 아니라 depth 내부 파라미터·크기, Z 보정(z_offset_m), 좌우반전(flip), 기준 RGB 크기도 본다. 시뮬레이터는
+    depth를 지금 설정으로 열기 때문에(flip 등) 사본과 다르면 깊이와 보정이 서로 다른 약속을 쓰게 된다."""
+    out = []
+    if not calibration_matches_current(conv, current_camera_cfg):
+        out.append("rgb_to_depth")
+    a, b = conv.cam, CameraModel.from_config(current_camera_cfg)
+    for key in ("fx", "fy", "cx", "cy", "width", "height", "z_offset_m", "rgb_width", "rgb_height"):
+        if abs(float(getattr(a, key)) - float(getattr(b, key))) > 1e-9:
+            out.append(key)
+    flip_a = bool(((conv.info.get("camera") or {}).get("depth") or {}).get("flip", False))
+    flip_b = bool((current_camera_cfg.get("depth") or {}).get("flip", False))
+    if flip_a != flip_b:
+        out.append("depth.flip")
+    return out
 
