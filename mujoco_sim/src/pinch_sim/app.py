@@ -59,10 +59,11 @@ from .ui import MonitorUI, Notices, arrange_viewer, auto_layout, monitors, notic
 from .voice_gateway import VoiceGateway  # noqa: E402
 
 WIN = "side_cam (click buttons / keys here)"
-BUTTONS = (("N", "new"), ("S", "select"), ("V", "valid"), ("Y", "RUN"), ("H", "home"), ("X", "stop"),
-           ("U", "undo"), ("R", "redo"), ("O", "orig"), ("Q", "quit"))
+BUTTONS = (("N", "new"), ("E", "edit"), ("S", "select"), ("V", "valid"), ("Y", "RUN"), ("H", "home"),
+           ("X", "stop"), ("U", "undo"), ("R", "redo"), ("O", "orig"), ("Q", "quit"))
 BAR_H = 36                       # button bar at the bottom of the side_cam window (= ui.Layout.bar_h)
-ENABLED = {"N": lambda st: st not in ("EXECUTING", "VALIDATING"), "S": lambda st: st == "GENERATED",
+ENABLED = {"N": lambda st: st not in ("EXECUTING", "VALIDATING"), "E": lambda st: st in EDITABLE,
+           "S": lambda st: st == "GENERATED",
            "V": lambda st: st in ("SELECTED", "FAILED"), "Y": lambda st: st == "PASSED",
            "H": lambda st: st in ("HOLD", "DONE", "ABORTED"), "X": lambda st: True, "Q": lambda st: True,
            "U": lambda st: st in EDITABLE, "R": lambda st: st in EDITABLE, "O": lambda st: st in EDITABLE}
@@ -517,7 +518,10 @@ def main(argv=None):
         hand_ctrl = HandController(hcfg, depth=hand_depth)
         hand_editor = MouseEditor(cam_model, cfg, layout.scale)      # same geometry as the mouse ...
         hand_editor.radius = hcfg.select_radius_px                  # ... with a wider pick radius
-        print(f"hand input: camera {a.hand} (point = select, pinch = drag)", flush=True)
+        session.hand_mode = "3d" if hand_depth is not None else "2d"
+        print(f"hand input: camera {a.hand} (point = select, pinch = drag "
+              f"{'in 3-D with depth' if hand_depth is not None else 'height only (2-D mode, no depth)'}; "
+              "only in edit mode: E or voice)", flush=True)
 
     def on_mouse(event, x, y, flags, param):
         xi, yi = layout.to_image(x, y)
@@ -547,6 +551,7 @@ def main(argv=None):
     if snap_dir:
         snap_dir.mkdir(parents=True, exist_ok=True)
     render_dt = 1.0 / cfg["app"]["render_hz"]
+    sync_log: list[float] = []       # colour capture -> matched depth frame time (s), to set max_skew_s on site
     frame, last_state, last_render = 0, None, 0.0
     lag_resets = 0
     app_start = time.perf_counter()
@@ -665,15 +670,18 @@ def main(argv=None):
                 with session.acting("key"):
                     session.handle_key(k, d)
             if hand_ctrl is not None:        # hand: same MouseEditor and Session methods as the mouse
-                lm, t_hand, cw, ch, _ = hand_cam.latest()
+                lm, t_hand, cw, ch, _ = hand_cam.latest()       # t_hand = capture time of that colour frame
                 t_now = time.monotonic()
-                depth_mm = None
-                if depth_src is not None:
-                    depth_mm, t_depth = depth_src.latest()
-                    depth_mm = depth_mm if t_now - t_depth < 0.3 else None
+                depth_mm, depth_why = None, ""
+                if depth_src is not None:                       # the depth frame of the same moment, or why not
+                    from .hand_depth import pick_depth
+                    depth_mm, depth_why, skew = pick_depth(depth_src.recent(), t_hand, t_now, hand_ctrl.depth.cfg)
+                    if skew is not None:
+                        sync_log.append(skew)
                 with session.acting("hand"):
                     hand_ctrl.step(lm if t_now - t_hand < 0.3 else None, t_now, cw, ch,
-                                   layout.img_w, layout.img_h, hand_editor, session, d, depth_mm=depth_mm)
+                                   layout.img_w, layout.img_h, hand_editor, session, d, depth_mm=depth_mm,
+                                   depth_reason=depth_why)
             if gateway is not None:          # voice requests: same thread, same Session methods, after keys
                 gateway.drain(session, d)
             if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
@@ -688,6 +696,13 @@ def main(argv=None):
     cv2.destroyAllWindows()
     summary = {"frames": frame, "lag_resets": lag_resets, "final_state": session.state, "last_run": session.last_run,
                "events": len(session.events)}
+    if sync_log:
+        s_ms = np.abs(np.array(sync_log)) * 1000
+        summary["rgb_depth_skew_ms"] = {"n": int(s_ms.size), "p50": round(float(np.percentile(s_ms, 50)), 1),
+                                        "p95": round(float(np.percentile(s_ms, 95)), 1),
+                                        "max": round(float(s_ms.max()), 1)}
+    if marker_mon is not None and marker_mon.result is not None:
+        summary["markers_last"] = marker_mon.result.to_dict()
     print(json.dumps(summary, ensure_ascii=False, default=str))
     return summary
 

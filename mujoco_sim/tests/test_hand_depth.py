@@ -96,6 +96,8 @@ def rig(scene, cfg, data):
     me = MouseEditor(cam, cfg, 1.0)
     me.radius = hcfg.select_radius_px
     ctrl = HandController(hcfg, depth=HandDepth(cam))
+    s.set_edit_mode(True, "test")
+    s.calib_state = "verified"                # the markers agree (pac_calib.MarkerMonitor)
     return s, data, cam, me, ctrl, W, H
 
 
@@ -153,17 +155,109 @@ def test_a_still_pinch_selects_without_editing(rig):
     assert np.linalg.norm(s.path.points_m[s.pointed_index()] - s.path.points_m[k]) < 1e-9
 
 
-def test_pinch_without_depth_falls_back_to_the_height_drag(rig):
+def _refusals(s):
+    return [e.data["reason"] for e in s.events if e.kind == "hand_refused"]
+
+
+def test_pinch_without_depth_is_refused_never_a_silent_height_drag(rig):
     s, d, cam, me, ctrl, W, H = rig
     k = s.region_index("middle")
     u, v = cam.project(s.path.points_m[k])[0][0]
-    z0 = s.path.points_m[k, 2]
+    fp = s.path.fingerprint
     frames = [(hand(u / W, v / H, "open"), 0)] * 6 + [(hand(u / W, v / H, "pinch"), 0)] * 6
     frames += [(hand(u / W, (v - i * 3) / H, "pinch"), 0) for i in range(1, 16)]
     frames += [(hand(u / W, (v - 45) / H, "open"), 0)] * 6
     _run(ctrl, s, d, me, W, H, frames)
-    assert ctrl.grab3d is None and s.edit.editor.can_undo
-    assert s.path.points_m[s.pointed_index()][2] > z0 + 0.01
+    assert ctrl.grab3d is None and not s.edit.editor.can_undo and s.path.fingerprint == fp
+    assert _refusals(s) == ["no_depth"]
+
+
+def test_unverified_calibration_refuses_the_3d_pinch(rig):
+    s, d, cam, me, ctrl, W, H = rig
+    s.calib_state = "no_config"                # no fixed markers: the overlay / depth mapping is not verified
+    k = s.region_index("middle")
+    u, v = cam.project(s.path.points_m[k])[0][0]
+    fp = s.path.fingerprint
+    frames = [(hand(u / W, v / H, "open"), 900)] * 6 + [(hand(u / W, v / H, "pinch"), 900)] * 10
+    frames += [(hand((u + i) / W, v / H, "pinch"), 900 - 2 * i) for i in range(1, 16)]
+    _run(ctrl, s, d, me, W, H, frames)
+    assert s.path.fingerprint == fp and _refusals(s) == ["calib_unverified"]
+
+
+def _grab_and_move(rig, steps=20):
+    """Grab the middle point at its own depth and move the hand 4 cm toward the camera: (t, fp_before, u, v, z)."""
+    s, d, cam, me, ctrl, W, H = rig
+    k = s.region_index("middle")
+    p0 = s.path.points_m[k].copy()
+    u, v = cam.project(p0)[0][0]
+    z0 = int(round((cam.R_cw @ p0 + cam.t_cw)[2] * 1000))
+    fp = s.path.fingerprint
+    frames = [(hand(u / W, v / H, "open"), z0)] * 6 + [(hand(u / W, v / H, "pinch"), z0)] * 10
+    frames += [(hand(u / W, v / H, "pinch"), z0 - 2 * i) for i in range(1, steps + 1)]
+    t = _run(ctrl, s, d, me, W, H, frames)
+    assert s.edit.dragging and ctrl.grab3d["started"]
+    return t, fp, u, v, z0 - 2 * steps
+
+
+def test_depth_lost_during_a_drag_pauses_then_cancels_and_restores(rig):
+    s, d, cam, me, ctrl, W, H = rig
+    t, fp, u, v, z = _grab_and_move(rig)
+    t = _run(ctrl, s, d, me, W, H, [(hand(u / W, v / H, "pinch"), 0)] * 15, t0=t)      # 0.5 s without depth
+    assert s.edit.dragging and ctrl.grab3d["lost_since"] is not None            # paused, preview kept
+    assert "깊이 끊김" in ctrl.status_line()
+    t = _run(ctrl, s, d, me, W, H, [(hand(u / W, v / H, "pinch"), z)] * 3, t0=t)        # depth back: continues
+    assert s.edit.dragging and ctrl.grab3d["lost_since"] is None
+    _run(ctrl, s, d, me, W, H, [(hand(u / W, v / H, "pinch"), 0)] * 40, t0=t)           # 1.3 s without depth
+    assert not s.edit.dragging and ctrl.grab3d is None and s.path.fingerprint == fp
+    assert not s.edit.editor.can_undo and _refusals(s) == ["depth_lost"]
+
+
+def test_opening_the_pinch_while_depth_is_missing_keeps_nothing(rig):
+    s, d, cam, me, ctrl, W, H = rig
+    t, fp, u, v, z = _grab_and_move(rig)
+    t = _run(ctrl, s, d, me, W, H, [(hand(u / W, v / H, "pinch"), 0)] * 6, t0=t)
+    _run(ctrl, s, d, me, W, H, [(hand(u / W, v / H, "open"), 0)] * 6, t0=t)
+    assert not s.edit.dragging and s.path.fingerprint == fp and _refusals(s) == ["depth_lost"]
+
+
+def test_a_depth_jump_is_never_accepted_later():
+    """The old filter took a jump after 0.3 s; now a jump is no measurement (the grab pauses / cancels)."""
+    hd = HandDepth(_FlatCam(), DepthConfig())
+    t = 0.0
+    for _ in range(10):
+        t += 1 / 30
+        hd.update(*_fingers(700), t)
+    for _ in range(30):                                       # 1 s at a depth 20 cm away (the desk behind)
+        t += 1 / 30
+        out = hd.update(*_fingers(900), t)
+        assert hd.raw is None and hd.reason == "depth_jump" and abs(out[2] - 0.7) < 0.002
+
+
+def test_depth_frame_is_matched_to_the_colour_capture_time():
+    from pinch_sim.hand_depth import pick_depth
+    c = DepthConfig()
+    frames = [(f"d{i}", 10.0 + i / 30) for i in range(8)]     # 30 fps, newest at 10.233 s
+    frame, why, skew = pick_depth(frames, 10.11, 10.25, c)      # colour captured 140 ms ago (MediaPipe latency)
+    assert frame == "d3" and why == "" and abs(skew) < 0.02    # not the newest frame: the one of that moment
+    assert pick_depth(frames, 9.90, 10.25, c)[:2] == (None, "rgb_depth_out_of_sync")
+    assert pick_depth(frames, 10.2, 10.6, c)[:2] == (None, "depth_stream_stopped")
+    assert pick_depth([], 10.2, 10.2, c)[:2] == (None, "no_depth_frame")
+
+
+def test_overlapping_path_points_pick_the_one_at_the_fingers_depth(rig):
+    """Two passes under the cursor: the pinch takes the pass at the finger's 3-D point, the mouse the front one."""
+    from pinch_sim.screen import pick_index
+    s, d, cam, me, ctrl, W, H = rig
+    o, r = cam.pixel_ray(300.0, 200.0)
+    near, far = o + 0.6 * r, o + 0.9 * r                       # same pixel, two depths
+    side = np.cross(r, [0, 0, 1.0])
+    side /= np.linalg.norm(side)
+    P = np.vstack([o + 0.5 * r - 0.1 * side] + [near + x * side for x in np.linspace(-0.01, 0.01, 5)]
+                  + [o + 0.75 * r + 0.2 * side] + [far + x * side for x in np.linspace(-0.01, 0.01, 5)]
+                  + [o + 1.0 * r + 0.1 * side])
+    k_near, k_far = 3, 9
+    assert pick_index(P, cam, 300.0, 200.0, 32) == k_near                               # mouse: the front pass
+    assert pick_index(P, cam, 300.0, 200.0, 32, near_world=far + [0, 0, 0.01]) == k_far   # pinch: the far pass
 
 
 def test_pointing_never_grabs(rig):

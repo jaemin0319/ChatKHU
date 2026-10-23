@@ -12,8 +12,11 @@ r"""Selection -> validation -> approval -> execution state machine (UI independe
 Voice (pinch_sim.voice_gateway) calls the SAME methods from the SAME main-loop thread. Additions for it:
   * rev: +1 on every state set (_set) and edit-mode change; voice answers carry the rev they refer to.
   * listeners: called from _emit with every Event (kind, actor, request_id, rev) - the gateway forwards them.
-  * edit_mode: informational "edit mode" flag (voice "start edit", any drag, FAILED). It never blocks
-    the mouse; can_edit() alone decides whether editing is allowed.
+  * edit_mode: "edit mode" (voice "start edit", key E, any drag, FAILED). It never blocks the mouse - can_edit()
+    alone decides whether editing is allowed - but the HAND only edits in edit mode (hand_input.py). Turning it
+    on drops a booked auto-run (the user wants to change the path, not run it).
+  * a drag belongs to the input that started it (mouse / hand): the other one cannot move, end or cancel it
+    (key X and voice still cancel any drag).
   * auto-run: cmd_validate(d, auto_run_request=id) or arm_auto_run(id) books "run when THIS validation
     passes". watch(d) then calls cmd_approve(d) (same binding re-check) only if the PASSED report has the
     booked token and path fingerprint. Any _invalidate (edit, X, new path, regeneration, execution end)
@@ -170,6 +173,23 @@ class Session:
         self.edit_mode = on
         self.rev += 1
         self._emit(f"edit mode {'on' if on else 'off'}" + (f": {why}" if why else ""), "edit_mode", on=on)
+        if on:
+            self.cancel_auto_run("edit mode on")
+
+    def toggle_edit_mode(self) -> bool:
+        """Key E: edit mode on (where the path can be edited) / off (not during a drag)."""
+        if self.edit_mode:
+            if self.edit is not None and self.edit.dragging:
+                self._emit("edit mode stays on: release the drag first", "refused")
+                return False
+            self.set_edit_mode(False, self._actor)
+            return True
+        ok, why = self.can_edit()
+        if not ok:
+            self._emit(f"edit mode refused: {why}", "refused")
+            return False
+        self.set_edit_mode(True, self._actor)
+        return True
 
     def robot_state(self, d: mujoco.MjData) -> RobotState:
         q = d.qpos[self.idx.qpos].copy()
@@ -686,6 +706,7 @@ class Session:
             self._emit(f"edit not started: {self.edit.message}", "refused")
             return False
         self._drag_prev_pointed = None if self.pointed is None else self.pointed.copy()
+        self._drag_owner = self._actor
         self.edit_mode = True
         if free:
             self._edited(f"dragging point {index} in 3-D (hand)", "edit_begin")
@@ -694,29 +715,34 @@ class Session:
             self._edited(f"dragging point {index} vertically at x={ax:.3f} y={ay:.3f} m (height only)", "edit_begin")
         return True
 
+    def _foreign_drag(self) -> bool:
+        """A mouse / hand call on the drag the OTHER input started (each pointer keeps its own drag)."""
+        owner = getattr(self, "_drag_owner", None)
+        return self._actor in ("mouse", "hand") and owner in ("mouse", "hand") and owner != self._actor
+
     def edit_update(self, control_point) -> bool:
         """control_point None = invalid ray / outside workspace: the last valid preview is kept."""
-        if self.edit is None or not self.edit.dragging:
+        if self.edit is None or not self.edit.dragging or self._foreign_drag():
             return False
         ok = self.edit.update(control_point)
         self.path = self.edit.current_path()
         return ok
 
     def edit_end(self) -> bool:
-        if self.edit is None or not self.edit.dragging:
+        if self.edit is None or not self.edit.dragging or self._foreign_drag():
             return False
         p_end = self.edit.selected_point()
         kept = self.edit.end()
         if kept and p_end is not None:
-            # the dragged point (mouse now, pinch later) becomes voice "here / there"; undo puts the old one back
-            self._pointed_hist.append((len(self.edit.editor.candidate_records), getattr(self, "_drag_prev_pointed", None)))
+            # the dragged point (mouse or pinch) becomes voice "here / there"; undo puts the old one back
+            self._pointed_hist.append((self.edit.undo_depth, getattr(self, "_drag_prev_pointed", None)))
             self._pointed_redo = []
             self.pointed = p_end.copy()
         self._edited(("edit kept: " if kept else "edit discarded: ") + self.edit.message, "edit_end", kept=kept)
         return kept
 
     def edit_cancel(self) -> bool:
-        if self.edit is None or not self.edit.dragging:
+        if self.edit is None or not self.edit.dragging or self._foreign_drag():
             return False
         self.edit.cancel()
         self._edited("drag cancelled", "edit_cancel")
@@ -799,7 +825,7 @@ class Session:
         kept = self.edit.end()
         moved = float(np.linalg.norm(p1 - p0)) if kept and p1 is not None else 0.0
         if kept:
-            self._pointed_hist.append((len(self.edit.editor.candidate_records), p0.copy()))
+            self._pointed_hist.append((self.edit.undo_depth, p0.copy()))
             self._pointed_redo = []
             self.pointed = p1.copy()          # "here" now is the moved point ("a bit more" moves it again)
             self.edit_mode = True
@@ -813,17 +839,18 @@ class Session:
         if not ok or self.edit.dragging:
             self._emit(f"{name} refused: {why or 'release the drag first'}", "refused")
             return False
-        n_before = len(self.edit.editor.candidate_records)
+        n_before = self.edit.undo_depth
         if not getattr(self.edit, name)():
             self._emit(f"{name}: {self.edit.message}", "refused")   # e.g. nothing to undo: state unchanged
             return False
-        # undoing a voice nudge puts "here" back where it was (not at the nearest point of the old path)
+        # undoing an edit puts "here" back where it was (not at the nearest point of the old path);
+        # entries are tagged with the undo depth right after their edit (one step per edit)
         if name == "undo" and self._pointed_hist and self._pointed_hist[-1][0] == n_before:
             n_after, p_before = self._pointed_hist.pop()
             self._pointed_redo.append((n_after, p_before, self.pointed))
             self.pointed = p_before
         elif name == "redo" and self._pointed_redo and \
-                self._pointed_redo[-1][0] == len(self.edit.editor.candidate_records):
+                self._pointed_redo[-1][0] == self.edit.undo_depth:
             n_after, p_before, p_after = self._pointed_redo.pop()
             self._pointed_hist.append((n_after, p_before))
             self.pointed = p_after
@@ -866,7 +893,7 @@ class Session:
     def handle_key(self, key: str, d) -> None:
         key = key.upper()
         {"N": lambda: self.cmd_new_target(d), "S": self.cmd_select, "V": lambda: self.cmd_validate(d),
-         "Y": lambda: self.cmd_approve(d), "H": lambda: self.cmd_return(d),
+         "Y": lambda: self.cmd_approve(d), "H": lambda: self.cmd_return(d), "E": self.toggle_edit_mode,
          "X": lambda: self.cmd_cancel(d), "U": lambda: self._edit_history("undo"),
          "R": lambda: self._edit_history("redo"), "O": lambda: self._edit_history("reset")}.get(key, lambda: None)()
 

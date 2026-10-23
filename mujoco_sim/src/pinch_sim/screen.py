@@ -52,11 +52,26 @@ def pixel_to_vertical(cam: CameraModel, u, v, xy, z_range=None, min_sin: float =
     return np.array([xy[0], xy[1], t])
 
 
-def pick_index(points, cam: CameraModel, u, v, radius_px: float) -> int | None:
-    """Nearest interior path point within radius_px (camera pixels) of (u, v); endpoints are not pickable."""
+def pick_index(points, cam: CameraModel, u, v, radius_px: float, near_world=None) -> int | None:
+    """Interior path point within radius_px (camera pixels) of (u, v); endpoints are not pickable.
+
+    Where the path passes the cursor more than once (it overlaps itself on the screen), the candidates form
+    separate runs of consecutive indices. Within a run the point nearest on the screen wins; between runs the one
+    nearest to `near_world` (the pinching finger's 3-D point, when the depth camera measured it), else the one
+    nearest to the camera along the cursor ray (what the user sees in front)."""
     uv, front = cam.project(points)
     dist = np.hypot(uv[:, 0] - u, uv[:, 1] - v)
     dist[~front] = np.inf
     dist[[0, -1]] = np.inf
-    k = int(np.argmin(dist))
-    return k if dist[k] <= radius_px else None
+    cand = np.flatnonzero(dist <= radius_px)
+    if cand.size == 0:
+        return None
+    runs = np.split(cand, np.flatnonzero(np.diff(cand) > 1) + 1)
+    best = [int(r[np.argmin(dist[r])]) for r in runs]
+    if len(best) == 1:
+        return best[0]
+    P = np.asarray(points, float)
+    if near_world is not None:
+        return min(best, key=lambda k: float(np.linalg.norm(P[k] - np.asarray(near_world, float))))
+    o, r = cam.pixel_ray(u, v)
+    return min(best, key=lambda k: float((P[k] - o) @ r))

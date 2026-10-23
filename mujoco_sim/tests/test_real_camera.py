@@ -65,6 +65,9 @@ def test_hover_rings_the_point_the_finger_would_take(sess, cfg, data):
     ctrl = HandController(HandConfig(mirror=False))
     k = len(s.path.points_m) // 3
     u, v = cam.project(s.path.points_m[k])[0][0]
+    ctrl.step(hand((u + 6) / 768, (v + 4) / 480, "point"), 0.0, CAM_W, CAM_H, 768, 480, me, s, data)
+    assert ctrl.hover is None                              # outside edit mode the hand offers nothing
+    s.set_edit_mode(True, "test")
     for i in range(3):
         ctrl.step(hand((u + 6) / 768, (v + 4) / 480, "point"), i / 30, CAM_W, CAM_H, 768, 480, me, s, data)
     uv = cam.project(s.path.points_m)[0]

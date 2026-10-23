@@ -82,6 +82,12 @@ class PathEdit:
     def edited(self) -> bool:
         return bool(self.editor.candidate_records) or self.dragging
 
+    @property
+    def undo_depth(self) -> int:
+        """Number of undoable steps (one per kept gesture / reset). Unlike len(candidate_records) it grows by exactly
+        one per edit (nearby corrections are merged into one record), so it can tag an edit for undo/redo."""
+        return len(self.editor._undo)
+
     def current_path(self) -> CartesianPath:
         """Displayed geometry (preview during a drag) as a pinch_sim path in world."""
         if not self.edited:

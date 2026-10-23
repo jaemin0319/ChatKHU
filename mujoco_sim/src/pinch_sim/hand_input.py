@@ -12,9 +12,17 @@ The hand stands in for the mouse on the monitor image, so it goes through the sa
       - with a depth camera (`HandController(depth=HandDepth(...))`): the grabbed point follows the hand's
         3-D motion since the pinch closed, 1:1 (hand_depth.py). The path changes only after the hand moved
         `start_m`; a pinch opened before that only selects the point (like a click).
-      - without depth: like the mouse - the point moves on its vertical line under the pinch (height only).
+        A 3-D grab needs a verified camera calibration (session.calib_state, fixed markers) and a depth measured
+        at the fingers in THIS frame, in sync with the colour frame. Otherwise nothing is grabbed and the reason is
+        shown and sent as a "hand_refused" event - never a silent switch to the 2-D height drag. Depth lost during
+        a drag freezes the preview; after `lost_cancel_s` the drag is cancelled (path restored), and opening the
+        pinch while the depth is missing cancels instead of keeping a frozen preview.
+      - without a depth camera (a webcam, explicit 2-D mode shown on screen): like the mouse - the point moves on
+        its vertical line under the pinch (height only).
   * anything in between (thumb neither on the index tip nor clearly away) does nothing, so pointing never
     turns into a grab on the way to a pinch and the other way round.
+  * the hand edits only in edit mode (session.edit_mode: voice "경로 수정할래", key E, a mouse drag); outside it a
+    point / pinch is refused with a hint, so a stray hand never changes the path. The mouse is not gated.
 
 Rules taken from the path editor's HandInput (path 편집/src/pac_path_editor/webcam.py):
   * pinch hysteresis: closed below `pinch_close`, open above `pinch_open` (thumb-index distance over
@@ -90,13 +98,28 @@ def classify(landmarks, w: int, h: int, pinched: bool, cfg: HandConfig) -> Gestu
     return Gesture("open" if ratio >= cfg.pinch_open else "other", mid, ratio)
 
 
+REFUSAL_TEXT = {
+    "not_edit_mode": "수정 모드가 아니에요 - E 또는 '쿠옹아, 경로 수정할래'",
+    "calib_unverified": "정합 미검증: 3D 핀치 꺼짐 (마우스로 고칠 수 있어요)",
+    "no_depth": "깊이를 못 읽었어요: 손을 카메라에서 조금 떨어뜨려 주세요",
+    "rgb_depth_out_of_sync": "깊이와 영상 시각이 안 맞아요: 다시 집어 주세요",
+    "depth_stream_stopped": "깊이 카메라가 멈췄어요",
+    "depth_lost": "깊이가 끊겨 이번 수정을 취소했어요",
+    "edit_mode_off": "수정 모드가 꺼져 잡은 점을 놓았어요",
+}
+MESSAGE_S = 2.5                  # a refusal stays next to the cursor this long
+
+
 class HandController:
     """Gestures -> MouseEditor calls (main thread). Camera independent, so it can be tested."""
 
     def __init__(self, cfg: HandConfig, depth=None):
         self.cfg = cfg
         self.depth = depth            # HandDepth: pinch moves the point in 3-D; None: height only (2-D)
-        self.grab3d: dict | None = None   # {"k", "p0" world point, "h0" hand point, "started"} during a 3-D pinch
+        # {"k", "p0" world point, "h0" hand point, "started", "lost_since"} during a 3-D pinch
+        self.grab3d: dict | None = None
+        self.message, self._message_until = "", 0.0     # last refusal, shown next to the cursor
+        self._now = 0.0
         self.pinched = False          # hysteresis state of the hand pose
         self.armed = False            # an open hand was seen since the last pinch / loss
         self.grabbing = False         # a press was sent to the MouseEditor
@@ -114,11 +137,19 @@ class HandController:
         return now - self._pending_since + 1e-12 >= self.cfg.debounce_s
 
     def step(self, landmarks, now: float, cam_w: int, cam_h: int, img_w: int, img_h: int,
-             mouse_editor, session, d, depth_mm=None) -> None:
-        """depth_mm: the newest depth frame (with `depth`), None without a depth camera."""
+             mouse_editor, session, d, depth_mm=None, depth_reason: str = "") -> None:
+        """depth_mm: the depth frame matching this colour frame (with `depth`; hand_depth.pick_depth), None without
+        a depth camera or when it is missing - then depth_reason says why (no_depth_frame, rgb_depth_out_of_sync,
+        depth_stream_stopped)."""
         cfg = self.cfg
+        self._now = now
         g = classify(landmarks, cam_w, cam_h, self.pinched, cfg) if landmarks is not None else None
         self.gesture = g
+        editing = bool(session.edit_mode)
+        if self.grabbing and not editing:                 # edit mode switched off (E, voice) during a grab
+            self._abort(mouse_editor, session, "edit_mode_off")
+        elif self.grab3d is not None and session.calib_state != "verified":   # the camera moved during a grab
+            self._abort(mouse_editor, session, "calib_unverified")
         if g is None:                                     # hand lost: never a release
             if self._missing_since is None:
                 self._missing_since = now
@@ -141,14 +172,16 @@ class HandController:
 
         is_pinch = g.kind == "pinch"
         lm_px = None if self.depth is None else _px(landmarks, cam_w, cam_h)
-        hand = None
         if self.depth is not None:                        # measured only while the fingers are together
-            hand = self.depth.update(lm_px if is_pinch else None, depth_mm, now)
+            self.depth.update(lm_px if is_pinch else None, depth_mm, now)
+            if is_pinch and depth_mm is None and depth_reason:
+                self.depth.reason = depth_reason          # why there was no depth frame to measure in
         if is_pinch != self.pinched and self._stable("pinch" if is_pinch else "release", now):
             self.pinched = is_pinch
             if is_pinch:
                 if self.armed:                            # grab the point nearest to the pinch on the screen
-                    self.grabbing = self._grab(mouse_editor, session, d, x, y)
+                    self.grabbing = self._grab(mouse_editor, session, d, x, y) if editing else \
+                        self._refuse(session, "not_edit_mode")
                 self.armed = False
             elif self.grabbing:                           # open the pinch: release
                 self._release(mouse_editor, session, d)
@@ -161,11 +194,11 @@ class HandController:
                 self.depth.reset()
         if self.pinched and self.grabbing and is_pinch:   # an opening hand (thumb leaving) moves nothing
             if self.grab3d is not None:
-                self._move3d(session, hand)
+                self._move3d(mouse_editor, session, now)
             else:
                 mouse_editor.move(session, d, x, y)
 
-        if not self.grabbing and session.path is not None and session.can_edit()[0]:
+        if editing and not self.grabbing and session.path is not None and session.can_edit()[0]:
             from .screen import pick_index
             k = pick_index(session.path.points_m, mouse_editor.cam, x / mouse_editor.scale, y / mouse_editor.scale,
                            mouse_editor.radius)
@@ -176,36 +209,66 @@ class HandController:
             if self._dwell_xy is None or np.hypot(x - self._dwell_xy[0], y - self._dwell_xy[1]) > cfg.point_still_px:
                 self._dwell_xy, self._dwell_since, self._dwell_done = (x, y), now, False
             elif not self._dwell_done and now - self._dwell_since >= cfg.point_dwell_s:
-                if mouse_editor.press(session, d, x, y):
+                if not editing:
+                    self._refuse(session, "not_edit_mode")
+                elif mouse_editor.press(session, d, x, y):
                     mouse_editor.release(session, d)
                 self._dwell_done = True
         else:
             self._dwell_xy = None
 
     # ------------------------------------------------------------------ pinch: grab / move / release
+    def _refuse(self, session, reason: str, detail: str = "") -> bool:
+        """Show and send why the hand did nothing (False, for `self.grabbing = ...`)."""
+        self.message, self._message_until = REFUSAL_TEXT.get(reason, reason), self._now + MESSAGE_S
+        session._emit(f"hand refused: {reason}" + (f" ({detail})" if detail else ""), "hand_refused", reason=reason)
+        return False
+
+    def _abort(self, mouse_editor, session, reason: str) -> None:
+        """Drop the current grab: a started edit is cancelled (the path goes back to before the pinch)."""
+        g, self.grab3d = self.grab3d, None
+        if g is not None:
+            if g["started"]:
+                session.edit_cancel()
+        elif self.grabbing:
+            mouse_editor.cancel(session)
+        self.grabbing = False
+        self._refuse(session, reason)
+
     def _grab(self, mouse_editor, session, d, x, y) -> bool:
-        """3-D when the depth camera sees the pinching fingers now, else the 2-D (vertical line) drag."""
-        if self.depth is None or self.depth.out is None:
+        """3-D with a depth camera (or nothing, with the reason), the 2-D (vertical line) drag without one."""
+        if self.depth is None:                             # explicit webcam mode: height only, shown on screen
             self.grab3d = None
             return bool(mouse_editor.press(session, d, x, y))
+        if session.calib_state != "verified":
+            return self._refuse(session, "calib_unverified", session.calib_state or "no calibration")
+        if self.depth.raw is None:                         # the fingers were not measured in this frame
+            why = self.depth.reason
+            return self._refuse(session, why if why in REFUSAL_TEXT else "no_depth", why)
         ok, why = session.can_edit()
         if not ok:
-            session._emit(f"edit refused: {why}")
+            session._emit(f"edit refused: {why}", "refused")
             return False
         from .screen import pick_index
         k = pick_index(session.path.points_m, mouse_editor.cam, x / mouse_editor.scale, y / mouse_editor.scale,
-                       mouse_editor.radius)
+                       mouse_editor.radius, near_world=self.depth.out)
         if k is None:
             session._emit(f"no interior path point within {mouse_editor.radius:.0f} px of the pinch")
             return False
-        self.grab3d = {"k": k, "p0": session.path.points_m[k].copy(), "h0": self.depth.out.copy(), "started": False}
+        self.grab3d = {"k": k, "p0": session.path.points_m[k].copy(), "h0": self.depth.out.copy(), "started": False,
+                       "lost_since": None}
         return True
 
-    def _move3d(self, session, hand) -> None:
+    def _move3d(self, mouse_editor, session, now: float) -> None:
         g, c = self.grab3d, self.depth.cfg
-        if hand is None:
-            return                                         # no depth this frame: the preview stays
-        delta = hand - g["h0"]                             # the hand's own motion since the pinch closed, 1:1
+        if self.depth.raw is None:                         # no good depth this frame: the preview stays ...
+            if g["lost_since"] is None:
+                g["lost_since"] = now
+            elif now - g["lost_since"] >= c.lost_cancel_s:  # ... and a long gap cancels the drag
+                self._abort(mouse_editor, session, "depth_lost")
+            return
+        g["lost_since"] = None
+        delta = self.depth.out - g["h0"]                   # the hand's own motion since the pinch closed, 1:1
         n = float(np.linalg.norm(delta))
         if n > c.max_move_m:
             delta *= c.max_move_m / n
@@ -223,6 +286,10 @@ class HandController:
         g, self.grab3d = self.grab3d, None
         if g is None:
             mouse_editor.release(session, d)
+        elif g["lost_since"] is not None:                  # opened while the depth was missing: never keep a frozen
+            if g["started"]:                               # preview - cancel it
+                session.edit_cancel()
+            self._refuse(session, "depth_lost")
         elif g["started"]:
             session.edit_end()
         else:
@@ -262,19 +329,28 @@ class HandController:
             done = self._dwell_done
             cv2.circle(img, (cx, cy), 7, (0, 0, 0), -1, cv2.LINE_AA)
             cv2.circle(img, (cx, cy), 5, (0, 215, 255) if done else (255, 200, 0), -1, cv2.LINE_AA)
+            if text is not None:
+                self._draw_text(img, text, cx + 16, cy - 12)
         else:
             cv2.circle(img, (cx, cy), 5, (200, 200, 200), 1, cv2.LINE_AA)
-
+            if text is not None and self.message and self._now < self._message_until:   # e.g. cancelled on release
+                self._draw_text(img, text, cx + 16, cy - 12)
 
     def status_line(self) -> str:
-        """Short Korean line next to the pinch: how far the grabbed point moved, or why depth is missing."""
+        """Short Korean line next to the cursor: a refusal (why the hand did nothing), how far the grabbed point
+        moved, a paused grab, or the explicit 2-D mode."""
+        if self.message and self._now < self._message_until:
+            return self.message
+        pinching = self.gesture is not None and (self.gesture.kind == "pinch" or self.pinched)
         if self.depth is None:
-            return ""
+            return "2D 높이 모드" if pinching else ""
         g = self.grab3d
+        if g is not None and g.get("lost_since") is not None:
+            return "깊이 끊김 - 잠시 멈춤 (1초 넘으면 취소)"
         if g is not None and g.get("started") and "delta" in g:
             return "옮기는 중 " + _delta_text(g["delta"])
-        if self.depth.out is None:
-            return "깊이 없음: 카메라에서 더 멀리"
+        if pinching and self.depth.out is None:
+            return "깊이 없음: 카메라에서 조금 멀리"
         return "집기" if self.grabbing else ""
 
     def _draw_text(self, img, text, x, y) -> None:
@@ -336,6 +412,7 @@ class HandCamera:
         while not self._stop:
             t0 = time.monotonic()
             ok, frame = self._cap.read()
+            t_cap = time.monotonic()        # capture time (before MediaPipe): matched against the depth frames
             if not ok:
                 if self._file:                            # video file: loop
                     self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -349,7 +426,7 @@ class HandCamera:
                 lm = np.array([[p.x, p.y, p.z] for p in res.multi_hand_landmarks[0].landmark])
             h, w = frame.shape[:2]
             with self._lock:
-                self._latest = (lm, time.monotonic(), w, h, frame)
+                self._latest = (lm, t_cap, w, h, frame)
             if self._period:                              # play a file at its own frame rate
                 time.sleep(max(0.0, self._period - (time.monotonic() - t0)))
 

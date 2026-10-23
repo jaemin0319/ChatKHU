@@ -54,7 +54,10 @@ def progress_stage(session) -> tuple[int, str]:
         if session.edit_mode or edited:
             if st == "SELECTED":
                 return 1, "수정 경로 선택됨" if edited else "경로 선택됨"
-            return 1, "수정 중"
+            if not session.edit_mode:
+                return 1, "수정됨 (E: 수정 모드)"
+            hand = getattr(session, "hand_mode", "")
+            return 1, "수정 중" + (" · 손가락 3D" if hand == "3d" else " · 손가락(높이만)" if hand == "2d" else "")
         if path.path_id == "return_ready":
             return 0, "홈 복귀 경로" + (" 선택됨" if st == "SELECTED" else "")
         return 0, "경로 선택됨" if st == "SELECTED" else ""
@@ -91,7 +94,9 @@ def notice_text(ev, session) -> str | None:
                  ("redo: Nothing", "다시 실행할 수정이 없어요"),
                  ("reset: Paths are already", "이미 원래 경로예요"),
                  ("use path refused: this path failed", "검증에 실패한 경로예요. 수정하거나 원래 경로로 돌리세요"),
-                 ("fixed target rejected", "목표가 허용 범위를 벗어나요"))
+                 ("fixed target rejected", "목표가 허용 범위를 벗어나요"),
+                 ("edit mode stays on", "드래그를 놓은 뒤 수정 모드를 끄세요"),
+                 ("edit mode refused", f"지금은 수정 모드를 켤 수 없어요 ({KOREAN_STATE.get(st, st)})"))
         for prefix, text in rules:
             if msg.startswith(prefix):
                 return text
@@ -123,6 +128,15 @@ def notice_text(ev, session) -> str | None:
         return "움직임이 너무 작아 수정하지 않았어요"
     if k == "voice_link":
         return "쿠옹이 연결됨" if "connected" in msg else "쿠옹이 연결 끊김"
+    if k == "edit_mode":
+        return "수정 모드 켜짐 - 점을 가리키고 집어서 옮기세요" if ev.data.get("on") else "수정 모드 꺼짐"
+    if k == "hand_refused":
+        from .hand_input import REFUSAL_TEXT
+        return REFUSAL_TEXT.get(ev.data.get("reason", ""), "손 입력을 처리하지 않았어요")
+    if k == "calib":
+        c = ev.data.get("calib")
+        return {"verified": "카메라 정합 확인됨 (기준 표지)", "moved": "카메라가 움직였어요 - 다시 보정하세요 (3D 핀치 꺼짐)",
+                "not_visible": "기준 표지가 안 보여 정합을 확인할 수 없어요 (3D 핀치 꺼짐)"}.get(c)
     return None
 
 

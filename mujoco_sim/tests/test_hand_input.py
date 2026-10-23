@@ -2,6 +2,7 @@
 
 Pointing (index straight, others folded) held still selects the nearest path point; a pinch near a path
 point grabs it, moving the pinch drags it, opening releases it; losing the hand cancels a drag.
+The hand edits only in edit mode (voice "경로 수정할래", key E); the mouse is not gated.
 """
 import numpy as np
 import pytest
@@ -64,6 +65,7 @@ def rig(scene, cfg, data):
     hcfg = HandConfig()
     me = MouseEditor(cam, cfg, 1.0)
     me.radius = hcfg.select_radius_px
+    s.set_edit_mode(True, "test")
     return s, data, cam, me, HandController(hcfg), W, H
 
 
@@ -112,3 +114,53 @@ def test_pinch_needs_an_open_hand_first_and_loss_cancels(rig):
     assert s.edit.dragging
     _run(ctrl, s, d, me, W, H, [None] * 20, t0=t)                            # hand lost for 0.67 s
     assert not s.edit.dragging and not s.edit.editor.can_undo                 # drag cancelled, nothing kept
+
+
+def test_the_hand_does_nothing_outside_edit_mode_but_the_mouse_does(rig):
+    s, d, cam, me, ctrl, W, H = rig
+    s.set_edit_mode(False, "test")
+    k = s.region_index("middle")
+    u, v = cam.project(s.path.points_m[k])[0][0]
+    fp = s.path.fingerprint
+    frames = [hand(u / W, v / H, "point")] * 20 + [hand(u / W, v / H, "open")] * 6
+    frames += [hand(u / W, v / H, "pinch")] * 6 + [hand(u / W, (v - i * 3) / H, "pinch") for i in range(1, 16)]
+    _run(ctrl, s, d, me, W, H, frames)
+    assert s.path.fingerprint == fp and s.pointed is None and not s.edit.dragging
+    refusals = [e for e in s.events if e.kind == "hand_refused"]
+    assert refusals and {e.data["reason"] for e in refusals} == {"not_edit_mode"}
+    assert "수정 모드" in ctrl.status_line()
+    with s.acting("mouse"):                                                    # the mouse is not gated
+        assert me.press(s, d, u, v) and me.move(s, d, u, v - 30) and me.release(s, d)
+    assert s.path.fingerprint != fp and s.edit_mode
+
+
+def test_key_e_toggles_edit_mode_and_drops_a_booked_auto_run(rig):
+    s, d, *_ = rig
+    s.set_edit_mode(False, "test")
+    s.handle_key("E", d)
+    assert s.edit_mode
+    s.handle_key("E", d)
+    assert not s.edit_mode
+    s.cmd_select()
+    s.cmd_validate(d, auto_run_request="r1")    # threaded=False: passes at once, the run waits for watch()
+    assert s.state == "PASSED" and s.auto_run is not None
+    s.set_edit_mode(True, "voice")              # the user says "경로 수정할래": no automatic run any more
+    assert s.auto_run is None and s.events[-1].kind == "auto_run_cancelled"
+    s.watch(d)
+    assert s.state == "PASSED"                  # nothing started moving
+
+
+def test_a_drag_belongs_to_the_input_that_started_it(rig):
+    s, d, cam, me, ctrl, W, H = rig
+    k = s.region_index("middle")
+    u, v = cam.project(s.path.points_m[k])[0][0]
+    t = _run(ctrl, s, d, me, W, H, [hand(u / W, v / H, "open")] * 6 + [hand(u / W, v / H, "pinch")] * 6
+             + [hand(u / W, (v - i * 3) / H, "pinch") for i in range(1, 8)])
+    assert s.edit.dragging
+    with s.acting("mouse"):                      # the mouse cannot move, end or cancel the hand's drag
+        assert not s.edit_update(s.path.points_m[k] + [0, 0, 0.05])
+        assert not me.release(s, d) and not me.cancel(s)
+    assert s.edit.dragging
+    with s.acting("key"):                        # key X still cancels any drag
+        assert s.cmd_cancel(d) == "drag"
+    assert not s.edit.dragging
