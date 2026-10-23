@@ -59,11 +59,10 @@ def build_overlay(session, d: mujoco.MjData) -> Overlay:
     if session.edit is not None and session.edit.edited:
         ov.reference = session.edit.base.points_m
         ov.selected = session.edit.selected_point()
-    if session.state == "FAILED" and session.events:
-        rep_dict = session.events[-1].data.get("report")
-        if rep_dict:
-            ov.failures = [(np.array(c["details"]["where_m"]), c["kind"]) for c in rep_dict["checks"]
-                           if c["status"] != "PASS" and c["details"].get("where_m") is not None]
+    # where the last validation failed: kept by the session (not read from the newest event, which a click or a
+    # cancelled booking right after the failure would hide) while the user fixes the path
+    if session.state in ("FAILED", "GENERATED", "SELECTED"):
+        ov.failures = list(getattr(session, "last_failures", []))
     return ov
 
 

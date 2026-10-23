@@ -3,8 +3,11 @@
 manipulator_voice/wake_word.py에서 가져와 고쳤다.
 - 호출어와 표기 변형(음성 자막에서 "재비스"로 적힘)을 설정에서 받는다.
 - 원본은 명령 하나를 보내면 바로 닫혔다. 여기서는 "조금만 더"처럼 호출어 없이
-  이어지는 수정을 받아야 하므로, 호출어를 들은 뒤 대화가 이어지는 동안(마지막
-  대화 뒤 listen_seconds 안) 계속 열어 둔다.
+  이어지는 수정을 받아야 하므로, 호출어를 들은 뒤 listen_seconds 동안 열어 둔다.
+  이 시간은 함수가 실제로 실행될 때만 다시 채운다 (옆 사람 말이나 거절된 말로는 늘지 않는다).
+- 앱(시뮬레이터)이 질문하면("계속 갈까요, 돌아갈까요?") 호출어 창과 따로 "질문 창"을 연다:
+  그 질문의 답이 되는 함수만, 답 한 번만, answer_seconds 안에, 시뮬레이터 상태(rev)가 그대로일 때만
+  호출어 없이 받는다. 부정·엉뚱한 말에 다른 함수가 불리면 막는다(not_an_answer).
 - 호출어는 문장 맨 앞 두 단어 안에서만 찾는다("자", "야", "저기" 같은 말이 앞에 붙어도 된다).
   문장 중간의 글자는 보지 않으므로 짧은 표기("공아")가 "성공아" 같은 말에 걸리지 않는다
   (manipulator_voice/sim_dialog.py의 쿠옹이와 같은 방식).
@@ -114,13 +117,16 @@ class WakeGate:
     """호출어 대기 ↔ 대화 중. 이벤트 루프에서만 쓴다."""
 
     def __init__(self, spellings: tuple[str, ...], listen_seconds: float, fuzzy: bool = False,
-                 clock: Callable[[], float] = time.monotonic, call_words: tuple[str, ...] = ()) -> None:
+                 clock: Callable[[], float] = time.monotonic, call_words: tuple[str, ...] = (),
+                 answer_seconds: float = 20.0) -> None:
         self.spellings = spellings
         self.call_words = {w.casefold() for w in call_words}
         self.fuzzy = fuzzy
         self.listen_seconds = listen_seconds
+        self.answer_seconds = answer_seconds
         self._clock = clock
         self._deadline: Optional[float] = None
+        self._question: Optional[tuple[frozenset, Optional[int], float]] = None   # (함수들, rev, 마감)
 
     @property
     def open(self) -> bool:
@@ -136,8 +142,33 @@ class WakeGate:
         return detection
 
     def open_now(self) -> None:
-        """앱이 사용자에게 질문했을 때: 호출어 없이 답할 수 있게 연다."""
+        """호출어 창을 지금 연다 (모든 함수). 앱의 질문에는 ask()를 쓴다."""
         self._deadline = self._clock() + self.listen_seconds
+
+    # ------------------------------------------------------------------ 앱의 질문 (질문 창)
+    def ask(self, functions, rev: Optional[int] = None) -> None:
+        """앱이 질문했다: 그 질문의 답이 되는 함수(functions)만, 답 한 번, answer_seconds 안에 호출어 없이 받는다.
+        rev: 질문할 때 시뮬레이터 상태 번호. 그 사이 상태가 바뀌면 질문은 지난 것이다."""
+        self._question = (frozenset(functions), rev, self._clock() + self.answer_seconds)
+
+    @property
+    def question_open(self) -> bool:
+        return self._question is not None and self._clock() < self._question[2]
+
+    def answer_check(self, name: str, rev: Optional[int] = None) -> str:
+        """함수 name이 열린 질문의 답인가: '' (질문 없음), 'allowed', 'not_an_answer', 'expired'."""
+        q = self._question
+        if q is None:
+            return ''
+        functions, qrev, deadline = q
+        if self._clock() >= deadline or (qrev is not None and rev is not None and rev != qrev):
+            self._question = None
+            return 'expired'
+        return 'allowed' if name in functions else 'not_an_answer'
+
+    def close_question(self) -> None:
+        """답을 한 번 받았다 (함수를 불렀든 "아니"였든): 질문 창을 닫는다."""
+        self._question = None
 
     def extend(self) -> None:
         """열려 있으면 대기 시간을 다시 채운다 (대화가 이어지는 동안)."""
@@ -145,8 +176,28 @@ class WakeGate:
             self._deadline = self._clock() + self.listen_seconds
 
     def expire_if_due(self) -> bool:
-        """대기 시간이 지났으면 닫고 True를 돌려준다."""
+        """대기 시간이 지났으면 닫고 True를 돌려준다. 지난 질문 창도 닫는다."""
+        if self._question is not None and self._clock() >= self._question[2]:
+            self._question = None
         if self._deadline is not None and self._clock() >= self._deadline:
             self._deadline = None
             return True
         return False
+
+
+def gate_decision(name: str, *, announcement: bool, wake_open: bool, answer: str, duplicate: bool) -> Optional[dict]:
+    """AI가 부른 함수를 실행할지. None = 실행, dict = 실행하지 않고 AI에게 돌려줄 결과.
+
+    answer: WakeGate.answer_check(name, rev)의 값. 멈춤은 언제나 실행한다 (호출어·질문·rev와 무관)."""
+    if name == 'stop_motion':
+        return {'status': 'ignored', 'reason': 'duplicate'} if duplicate else None
+    if announcement:
+        # 앱 알림(질문)을 말하는 차례: 사용자가 답한 것이 아니므로 어떤 함수도 실행하지 않는다
+        return {'status': 'ignored', 'reason': 'announcement'}
+    if not (wake_open or answer == 'allowed'):
+        reason = {'not_an_answer': 'not_an_answer', 'expired': 'question_expired'}.get(answer, 'no_wake_word')
+        return {'status': 'blocked', 'reason': reason}
+    if duplicate:
+        # 한 말에서 같은 함수·인자를 다시 부르면 실행하지 않는다 (같은 수정이 두 번 적용되지 않게)
+        return {'status': 'ignored', 'reason': 'duplicate'}
+    return None

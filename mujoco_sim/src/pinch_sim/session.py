@@ -136,6 +136,10 @@ class Session:
         # "no_config", "unverified" - only "verified" lets the 3-D pinch run) and the hand input ("3d", "2d", "")
         self.calib_state = ""
         self.hand_mode = ""
+        # where the last validation failed: [(world point, check kind)] and the first one as % of the path length.
+        # Kept while the user fixes the path (drawn in red) until the next validation or a new path.
+        self.last_failures: list = []
+        self.fail_at_pct: float | None = None
         self._actor, self._request_id = "sim", ""
 
     # ------------------------------------------------------------------ bookkeeping
@@ -202,6 +206,7 @@ class Session:
         self.edit_mode = False
         self.pointed = None
         self._pointed_hist = []
+        self.last_failures, self.fail_at_pct = [], None
 
     def _invalidate(self, why: str = "path/state changed") -> None:
         self._token += 1            # any in-flight validation result is discarded
@@ -551,6 +556,7 @@ class Session:
         token = self._token
         args = (self.ctx, self.path, d.qpos.copy(), d.qvel.copy(), float(d.time), self.goal)
         self.edit_mode = False
+        self.last_failures, self.fail_at_pct = [], None
         self._set("VALIDATING", "validating (12 required checks incl. dry rollout)", "validate_start")
         if auto_run_request is not None:
             self.arm_auto_run(auto_run_request)
@@ -585,9 +591,21 @@ class Session:
                       "validation", report=rep.to_dict())
         else:
             self.edit_mode = True        # back to editing: the path stays, failures stay visible
-            self._set("FAILED", f"{rep.summary()}; " + " | ".join(rep.blocking()[:3]), "validation",
-                      report=rep.to_dict())
+            rd = rep.to_dict()
+            self.last_failures = [(np.array(c["details"]["where_m"], float), c["kind"]) for c in rd["checks"]
+                                  if c["status"] != "PASS" and c["details"].get("where_m") is not None]
+            self.fail_at_pct = self._percent_along(self.last_failures[0][0]) if self.last_failures else None
+            self._set("FAILED", f"{rep.summary()}; " + " | ".join(rep.blocking()[:3]), "validation", report=rd)
             self.cancel_auto_run("validation failed")
+
+    def _percent_along(self, p) -> float | None:
+        """Where world point p lies along the current path, % of its length (nearest sample)."""
+        if self.path is None:
+            return None
+        P = self.path.points_m
+        s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))])
+        k = int(np.argmin(np.linalg.norm(P - np.asarray(p, float), axis=1)))
+        return float(100.0 * s[k] / s[-1]) if s[-1] > 0 else 0.0
 
     def binding_problems(self, d) -> list[str]:
         rep, out = self.report, []
@@ -885,7 +903,8 @@ class Session:
         if rep is not None:
             out["report"] = {"summary": rep.summary(), "execution_allowed": rep.execution_allowed,
                              "blocking": rep.blocking()[:3],
-                             "failed_kinds": [c.kind for c in rep.checks if c.status != "PASS"]}
+                             "failed_kinds": [c.kind for c in rep.checks if c.status != "PASS"],
+                             "fail_at_pct": None if self.fail_at_pct is None else round(self.fail_at_pct, 1)}
         if self.last_run is not None:
             out["last_run"] = {k: self.last_run.get(k) for k in ("status", "reason", "path_source", "path_fp")}
         return out

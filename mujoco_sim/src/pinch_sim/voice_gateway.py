@@ -13,6 +13,8 @@ Protocol (one JSON object per message, multiprocessing.connection framing + HMAC
              "previous_state", "state", "rev_before", "rev", "duplicate", "detail", "status"}
   event   : {"v":1, "type":"event", "kind", "message", "state", "rev", "actor", "request_id", "data", "status"}
   hello   : {"v":1, "type":"hello", "status"}                      (sent on connect)
+  refused : {"v":1, "type":"refused", "reason"}    (sent to a second client while one is connected, then closed;
+            one voice client at a time - the first one keeps the link until it disconnects)
   client  : {"v":1, "type":"client_state", "text":str}            (voice -> sim: one short hint to draw)
   chat    : {"v":1, "type":"chat", "role":"user"|"kuong", "text":str}   (voice -> sim: conversation bubbles;
             what the user said/typed and what 쿠옹이 says - never function names, JSON or settings)
@@ -43,7 +45,7 @@ SAVE_DIR = Path(__file__).resolve().parents[2] / "saved_paths"   # mujoco_sim/sa
 # Session event kinds forwarded to the voice process
 FORWARDED = ("state", "point_select", "back_to_edit", "paths_saved", "new_target", "return_path", "select", "validate_start", "validation", "execution_start",
              "execution_end", "cancel", "regenerated", "edit_begin", "edit_end", "edit_cancel", "undo", "redo",
-             "reset", "edit_mode", "auto_run_armed", "auto_run_cancelled", "calib")
+             "reset", "edit_mode", "auto_run_armed", "auto_run_cancelled", "calib", "hand_refused")
 
 
 def _clean(text, limit: int) -> str:
@@ -90,7 +92,8 @@ class Dispatcher:
         if cmd == "status":
             return True, "", ""
         deadline = req.get("deadline_unix")
-        if isinstance(deadline, (int, float)) and time.time() > deadline:
+        # a stop is never too late: stopping later is still better than not stopping (and it has no rev check)
+        if cmd != "stop" and isinstance(deadline, (int, float)) and time.time() > deadline:
             return False, "REQUEST_EXPIRED", f"arrived/processed {time.time() - deadline:.1f} s after its deadline"
         if cmd in REV_CHECKED:
             exp = req.get("expected_rev")
@@ -111,11 +114,7 @@ class Dispatcher:
             if dragging:
                 return False, "DRAG_ACTIVE", "release the drag first"
             if cmd in ("start_edit", "continue_edit"):
-                ok, why = s.can_edit()
-                if not ok:
-                    return False, ("NO_PATH" if s.path is None else "NOT_EDITABLE"), why
-                s.set_edit_mode(True, "voice")
-                return True, "", "edit mode"
+                return self._start_edit(s, d)
             if cmd == "redo_last_edit":
                 ok, why = s.can_edit()
                 if not ok:
@@ -163,6 +162,25 @@ class Dispatcher:
                     return False, code, s.message
                 return self._use_current_path(s, d, rid)
         return False, "UNKNOWN_COMMAND", cmd
+
+    @staticmethod
+    def _start_edit(s, d):
+        """"경로 수정할래": edit mode ON in the simulator (the hand works only then), for the path there is now.
+
+        VALIDATING: the running validation (and its auto-run booking) is cancelled first - the user wants to change
+        the path, not run it. DONE at the target after the outbound move: the return path is what can be edited.
+        The detail tells the voice side what the user can use now (hand 3d / 2d / none, calibration state)."""
+        if s.state == "VALIDATING":
+            s.cmd_cancel(d)                                    # -> SELECTED, booking dropped
+        elif s.state == "DONE" and (s.last_exec or {}).get("phase") == "outbound":
+            ok, code = s.cmd_edit_return(d)                     # return path, edit mode on
+            if not ok:
+                return False, code, s.message
+        ok, why = s.can_edit()
+        if not ok:
+            return False, ("NO_PATH" if s.path is None else "NOT_EDITABLE"), why
+        s.set_edit_mode(True, "voice")
+        return True, "", {"edit_mode": True, "hand": s.hand_mode, "calib": s.calib_state, "phase": s.phase}
 
     @staticmethod
     def _move_point(s, req):
@@ -332,7 +350,12 @@ class VoiceGateway:
                 return n
             n += 1
             if kind == "connect":
-                self._drop(session, "voice process reconnected")
+                if self.connected:
+                    # one voice client at a time: a second one (e.g. the old ROS kuong_sim, which uses the same
+                    # socket and reconnects every second) is refused instead of silently replacing the first
+                    self._refuse(a, "another voice client is already connected")
+                    session._emit("second voice client refused (one is connected)", "voice_link")
+                    continue
                 self._conn_id += 1
                 self._conn, self._out = a, queue.Queue()
                 self.connected = True
@@ -358,6 +381,14 @@ class VoiceGateway:
                                "command": res["command"], "request_id": res["request_id"],
                                "accepted": res["accepted"], "reason": res["reason_code"],
                                "state": res["state"], "rev": res["rev"], "duplicate": res["duplicate"]})
+
+    @staticmethod
+    def _refuse(conn, why: str) -> None:
+        try:
+            conn.send_bytes(json.dumps({"v": PROTOCOL, "type": "refused", "reason": why}).encode("utf-8"))
+            conn.close()
+        except OSError:
+            pass
 
     def _log(self, rec: dict) -> None:
         if self.log_path is None:

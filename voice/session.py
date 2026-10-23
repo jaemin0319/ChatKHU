@@ -22,7 +22,7 @@ from voice import console, gateway
 from voice.config import Config
 from voice.tools import FakeEditor, format_call, tools_setup
 from voice.turn_log import Turn, TurnLogger
-from voice.wake_word import WakeGate
+from voice.wake_word import WakeGate, gate_decision
 
 INPUT_AUDIO_MIME = 'audio/pcm;rate=16000'
 TRANSCRIPTION_LANGUAGE = 'ko-KR'
@@ -70,7 +70,8 @@ class LiveAssistant:
         self._speaker = speaker
         self._lines = lines
         self._echo_input = echo_input
-        self._gate = WakeGate(cfg.wake_spellings, cfg.wake_seconds, cfg.wake_fuzzy, call_words=cfg.call_words)
+        self._gate = WakeGate(cfg.wake_spellings, cfg.wake_seconds, cfg.wake_fuzzy, call_words=cfg.call_words,
+                              answer_seconds=cfg.answer_seconds)
         self._handle: Optional[str] = None
         self._connected_once = False
         self._established = False
@@ -104,6 +105,10 @@ class LiveAssistant:
         }}
 
     async def run(self) -> None:
+        if hasattr(self._editor, 'on_activity'):
+            # 손(핀치·마우스)으로 고치는 동안은 대화가 이어지는 것으로 본다: 열린 호출어 창만 다시 채운다
+            loop = asyncio.get_running_loop()
+            self._editor.on_activity = lambda: loop.call_soon_threadsafe(self._gate.extend)
         watcher = asyncio.create_task(self._watch_gate())
         try:
             await self._run_with_reconnect()
@@ -218,6 +223,9 @@ class LiveAssistant:
                 console.info(f'[호출어] 시간이 지나 대기로 돌아갑니다. 다시 "{self._cfg.wake_word}"라고 불러 주세요.')
 
     # ------------------------------------------------------------------ 송신
+    def _moving(self) -> bool:
+        return (getattr(self._editor, 'status', None) or {}).get('state') == 'EXECUTING'
+
     async def _mic_loop(self, ws) -> None:
         mute = self._cfg.mute_mic_while_speaking and self._speaker is not None
         while True:
@@ -225,7 +233,9 @@ class LiveAssistant:
             pcm = chunk.pcm16
             if not pcm:
                 continue
-            if mute and self._speaker.is_playing(MIC_MUTE_TAIL_S):
+            # listen_while_moving: 움직이는 동안은 AI가 말해도 마이크를 연다 ("멈춰"가 묻히지 않게, 현장 확인 후에만)
+            if mute and self._speaker.is_playing(MIC_MUTE_TAIL_S) and \
+                    not (self._cfg.listen_while_moving and self._moving()):
                 pcm = bytes(len(pcm))  # AI가 말하는 동안은 무음을 보낸다
             await ws.send(json.dumps({'realtimeInput': {'audio': {
                 'mimeType': INPUT_AUDIO_MIME, 'data': base64.b64encode(pcm).decode()}}}))
@@ -276,7 +286,10 @@ class LiveAssistant:
                 await asyncio.sleep(0.2)
             console.info(f'[시뮬레이터] {text}')
             if text.endswith('?'):
-                self._gate.open_now()  # 질문의 답은 호출어 없이 받는다
+                # 질문의 답은 호출어 없이 받는다: 그 질문이 허용하는 함수만, 한 번, 지금 상태(rev)에서만
+                functions = getattr(self._editor, 'question_functions', lambda _t: None)(text)
+                if functions:
+                    self._gate.ask(functions, getattr(self._editor, 'rev', None))
             self._turn = Turn(user=f'[알림] {text}')
             self._turn_done.clear()
             await ws.send(json.dumps({'clientContent': {'turns': [{'role': 'user', 'parts': [
@@ -364,7 +377,8 @@ class LiveAssistant:
                 if turn.ai:
                     chat('kuong', turn.ai)
             self._logger.write(turn, fail_mode=self._editor.fail_mode)
-        self._gate.extend()
+            if turn.user and not turn.user.startswith('[알림]'):
+                self._gate.close_question()   # 질문의 답은 한 번만 (함수를 불렀든 "아니"였든)
         self._turn_done.set()
 
     # ------------------------------------------------------------------ 함수 호출
@@ -378,19 +392,15 @@ class LiveAssistant:
             name = call.get('name', '')
             args = call.get('args') or {}
             key = (name, json.dumps(args, sort_keys=True, ensure_ascii=False))
-            gate_open = self._gate.open or name == 'stop_motion'   # 멈춤은 호출어 없이도 받는다
-            if turn.user.startswith('[알림]'):
-                # 앱 알림(질문)을 말하는 차례: 사용자가 답한 것이 아니므로 어떤 함수도 실행하지 않는다
-                result = {'status': 'ignored', 'reason': 'announcement'}
-            elif gate_open and key in turn.done_keys:
-                # 한 말에서 같은 함수·인자를 다시 부르면 실행하지 않는다 (같은 수정이 두 번 적용되지 않게)
-                result = {'status': 'ignored', 'reason': 'duplicate'}
-            elif gate_open:
+            wake_open = self._gate.open
+            answer = '' if wake_open else self._gate.answer_check(name, getattr(self._editor, 'rev', None))
+            result = gate_decision(name, announcement=turn.user.startswith('[알림]'), wake_open=wake_open,
+                                   answer=answer, duplicate=key in turn.done_keys)
+            if result is None:
                 result = await asyncio.to_thread(self._editor.handle, name, args)  # 시뮬레이터 응답 대기
                 turn.done_keys.add(key)
-                self._gate.extend()
-            else:
-                result = {'status': 'blocked', 'reason': 'no_wake_word'}
+                if wake_open:
+                    self._gate.extend()       # 호출어 창은 실제로 실행된 명령이 있을 때만 다시 채운다
             console.info(f'[명령] {format_call(name, args)}')
             console.info(f'[결과] {json.dumps(result, ensure_ascii=False)}')
             turn.calls.append({'name': name, 'args': args, 'result': result})

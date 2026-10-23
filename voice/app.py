@@ -28,6 +28,17 @@ def parse_args(argv=None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def old_voice_processes() -> list[str]:
+    """예전 ROS 음성 모듈(work/integration-all의 manipulator_voice: kuong_sim 등)의 PID. 함께 켜면 같은 호출어로 둘 다
+    깨어나고 같은 시뮬레이터 소켓을 차지하려 한다."""
+    import subprocess
+    try:
+        out = subprocess.run(['pgrep', '-f', 'manipulator_voice'], capture_output=True, text=True, timeout=3).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [p for p in out.split() if p.isdigit()]
+
+
 def start_stdin_reader(loop: asyncio.AbstractEventLoop, queue: asyncio.Queue) -> None:
     def read() -> None:
         for line in sys.stdin:
@@ -43,10 +54,15 @@ async def run(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     if args.prompt:
         cfg.prompt_path = args.prompt.resolve()
-    elif args.sim is not None:  # 시뮬레이터용 지시문 (클릭한 점, 수정 완료 = 검증 후 자동 이동)
-        cfg.prompt_path = (Path(__file__).parent / 'prompts' / 'system_v5.md').resolve()
+    elif args.sim is not None:  # 시뮬레이터용 지시문 (수정 모드, 손가락 수정, 수정 완료 = 검증 후 자동 이동)
+        cfg.prompt_path = (Path(__file__).parent / 'prompts' / 'system_v6.md').resolve()
     if args.mic:
         cfg.mic = args.mic
+    old = old_voice_processes()
+    if old:
+        console.error('예전 ROS 쿠옹이(manipulator_voice)가 실행 중입니다 (PID ' + ', '.join(old) + '). 같은 마이크·호출어·'
+                      '시뮬레이터 소켓을 쓰므로 그 프로그램을 끈 뒤 다시 실행하세요.')
+        return 2
     gateway.api_key()  # 키가 없으면 여기서 멈춘다 (값은 출력하지 않는다)
 
     if args.sim is not None:
@@ -56,7 +72,7 @@ async def run(args: argparse.Namespace) -> int:
         except SimLinkError as exc:
             console.error(str(exc))
             return 2
-        console.info(f'시뮬레이터 연결됨 (rev {editor.rev}). 시뮬레이터 화면에서 고칠 점을 클릭한 뒤 말하세요.')
+        console.info(f'시뮬레이터 연결됨 (rev {editor.rev}). "{cfg.wake_word}, 경로 수정할래"라고 말하면 수정 모드가 켜집니다.')
     else:
         editor = FakeEditor(cfg.amount_cm, cfg.fail_mode or args.fail, cfg.fail_reason)
     mode = 'text' if args.text else 'mic'

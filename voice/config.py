@@ -31,6 +31,8 @@ class Config:
     mic: str
     mute_mic_while_speaking: bool
     log_dir: Path
+    answer_seconds: float = 20.0          # 앱의 질문에 호출어 없이 답할 수 있는 시간
+    listen_while_moving: bool = False     # 로봇이 움직이는 동안 AI가 말할 때도 마이크를 연다 (현장 확인 후에만 켠다)
 
     @property
     def wake_spellings(self) -> tuple[str, ...]:
@@ -77,4 +79,6 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
         mic=str(raw.get('mic') or '').strip(),
         mute_mic_while_speaking=bool(raw.get('mute_mic_while_speaking', True)),
         log_dir=base / raw.get('log_dir', 'logs'),
+        answer_seconds=float(raw.get('answer_seconds', 20)),
+        listen_while_moving=bool(raw.get('listen_while_moving', False)),
     )
