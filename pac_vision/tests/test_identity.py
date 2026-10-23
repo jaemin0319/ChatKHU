@@ -52,6 +52,17 @@ def test_identity_from_sysfs_and_v4l_links(tmp_path):
     assert identity_problems(None, ident) == ["no_identity"]
 
 
+def test_one_program_holds_the_camera(tmp_path):
+    import pytest
+    from pac_vision.devices import CameraBusy, camera_lock
+    lock = tmp_path / "cam.lock"
+    held = camera_lock("pinch_sim (simulator)", lock)
+    with pytest.raises(CameraBusy, match="pinch_sim"):
+        camera_lock("pac_vision calibrate.py", lock)
+    held.close()                                        # the simulator exits
+    camera_lock("pac_vision calibrate.py", lock).close()
+
+
 def test_identity_is_written_to_cam2base(tmp_path):
     import numpy as np
     from pac_vision.cam2base import solve_calibration

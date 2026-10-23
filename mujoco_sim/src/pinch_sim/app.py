@@ -362,6 +362,12 @@ def main(argv=None):
                     print(f"video: /dev/video{dev} (auto, name contains '{match}')", flush=True)
                 problems += [f"camera identity: {p} - same camera on the same USB port as the calibration?"
                              for p in identity_problems(a.calib, int(a.video))]
+            if a.video.isdigit():          # one program owns the Astra: the sim, or a pac_vision script, not both
+                from pac_vision.devices import CameraBusy, camera_lock
+                try:
+                    cam_lock = camera_lock("pinch_sim (simulator)")   # noqa: F841 - held until the app exits
+                except CameraBusy as exc:
+                    ap.error(str(exc))
             for p in problems:
                 print(f"CALIBRATION: {p}", flush=True)
             if problems and not a.allow_unverified_calib:

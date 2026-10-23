@@ -42,6 +42,36 @@ def rgb_identity(index: int, sys_root: Path = SYS_V4L, dev_root: Path = DEV_V4L)
             "by_id": _links_to(index, Path(dev_root) / "by-id")}
 
 
+class CameraBusy(RuntimeError):
+    """다른 프로그램이 카메라를 쓰고 있다 (메시지에 그 프로그램)."""
+
+
+def lock_path() -> Path:
+    return Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/pac-{os.getuid()}") / "pac_camera.lock"
+
+
+def camera_lock(owner: str, path: Path | None = None):
+    """Astra(RGB+depth)를 한 프로그램만 쓰게 하는 잠금. 돌려준 파일을 열어 두는 동안 잠겨 있다 (프로그램이 끝나면 풀림).
+
+    시뮬레이터(pinch_sim --video)와 pac_vision 스크립트(보정·확인)가 함께 쓴다. 이미 잠겨 있으면 CameraBusy."""
+    import fcntl
+    path = Path(path) if path else lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    f = open(path, "a+", encoding="utf-8")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.seek(0)
+        who = f.read().strip() or "다른 프로그램"
+        f.close()
+        raise CameraBusy(f"카메라를 {who}이(가) 쓰고 있습니다. 그 프로그램을 끈 뒤 다시 실행하세요") from None
+    f.seek(0)
+    f.truncate()
+    f.write(f"{owner} (PID {os.getpid()})")
+    f.flush()
+    return f
+
+
 def identity_problems(recorded: dict | None, current: dict) -> list[str]:
     """보정 때 신원과 지금 신원의 차이 (빈 목록 = 같은 카메라·같은 포트로 보임).
 

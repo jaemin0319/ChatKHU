@@ -21,6 +21,7 @@ BLUE, CYAN, PURPLE, BLACK = (255, 0, 0), (255, 255, 0), (200, 0, 200), (0, 0, 0)
 PANEL_MIN_W = 900       # 문구 패널 최소 폭 (영상 640 px보다 긴 줄이 잘리지 않게)
 ENTER_KEYS = (13, 10)   # ⚠️ 창 백엔드(GTK/Qt)에 따라 Enter 코드가 13 또는 10
 opened_rgb_device: int | None = None   # open_rgb가 실제로 연 /dev/videoN 번호 (보정 파일에 카메라 신원으로 남긴다)
+_camera_lock = None                    # 카메라를 이 프로그램만 쓰는 동안 열어 두는 잠금 파일 (devices.camera_lock)
 
 
 def log(msg: str):
@@ -176,6 +177,12 @@ def open_rgb(camera_cfg):
     """Astra RGB(UVC) 열기. 실제로 받은 크기를 돌려준다.
 
     rgb.device가 있으면(local.yaml) 그 장치, 없으면 이름에 rgb.name_match가 들어간 장치 중 프레임이 읽히는 첫 장치."""
+    global _camera_lock
+    from pac_vision.devices import CameraBusy, camera_lock
+    try:
+        _camera_lock = camera_lock(f"pac_vision {Path(sys.argv[0]).name}")
+    except CameraBusy as e:
+        sys.exit(f"[pac_vision] {e}")
     r = camera_cfg["rgb"]
     if r.get("device") is not None:
         devices, auto = [int(r["device"])], False
