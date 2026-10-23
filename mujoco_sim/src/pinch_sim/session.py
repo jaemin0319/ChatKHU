@@ -129,6 +129,10 @@ class Session:
         self.ab: tuple[np.ndarray, TargetSpec] | None = None   # fixed A (end effector) and B (desk target)
         self._path_builder = None            # rebuilds the current kind of path from the robot state (regenerate)
         self.screen_axes: dict[str, np.ndarray] | None = None   # voice directions, set by the app from the camera
+        # set by the app: real camera calibration ("" none, "verified", "checking", "moved", "not_visible",
+        # "no_config", "unverified" - only "verified" lets the 3-D pinch run) and the hand input ("3d", "2d", "")
+        self.calib_state = ""
+        self.hand_mode = ""
         self._actor, self._request_id = "sim", ""
 
     # ------------------------------------------------------------------ bookkeeping
@@ -847,6 +851,7 @@ class Session:
                "can_redo": bool(ed is not None and ed.editor.can_redo),
                "validation_token": self._token,
                "auto_run": None if self.auto_run is None else dict(self.auto_run.__dict__),
+               "calib": self.calib_state, "hand": self.hand_mode,
                "target": None if t is None else {"label": self.target_label, "r_m": round(float(t.r_m), 4),
                                                   "theta_deg": round(float(np.degrees(t.theta_rad)), 2)},
                "report": None, "last_run": None}

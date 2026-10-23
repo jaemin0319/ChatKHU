@@ -43,7 +43,7 @@ SAVE_DIR = Path(__file__).resolve().parents[2] / "saved_paths"   # mujoco_sim/sa
 # Session event kinds forwarded to the voice process
 FORWARDED = ("state", "point_select", "back_to_edit", "paths_saved", "new_target", "return_path", "select", "validate_start", "validation", "execution_start",
              "execution_end", "cancel", "regenerated", "edit_begin", "edit_end", "edit_cancel", "undo", "redo",
-             "reset", "edit_mode", "auto_run_armed", "auto_run_cancelled")
+             "reset", "edit_mode", "auto_run_armed", "auto_run_cancelled", "calib")
 
 
 def _clean(text, limit: int) -> str:
@@ -221,7 +221,7 @@ class Dispatcher:
 def event_message(session, ev) -> dict:
     return {"v": PROTOCOL, "type": "event", "kind": ev.kind, "message": ev.message, "state": ev.state,
             "rev": ev.rev, "actor": ev.actor, "request_id": ev.request_id,
-            "data": {k: v for k, v in ev.data.items() if k in ("kept", "edits", "on", "auto_request_id", "reason", "next", "which", "file")},
+            "data": {k: v for k, v in ev.data.items() if k in ("kept", "edits", "on", "auto_request_id", "reason", "next", "which", "file", "calib")},
             "status": session.status()}
 
 

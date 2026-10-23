@@ -222,6 +222,30 @@ class LatestTextPusher:
                 return
 
 
+CALIB_LEVEL = {"verified": "ok", "checking": "warn", "not_visible": "warn", "no_config": "warn", "moved": "bad",
+               "unverified": "bad"}
+
+
+def calib_text(state: str, monitor) -> str:
+    """One line about the real camera's calibration for the monitor badge and the voice status."""
+    if state == "unverified":
+        return "정합 미검증 보정 (리허설용): 화면 겹침을 믿지 마세요 · 3D 핀치 꺼짐"
+    return monitor.text() if monitor is not None else ""
+
+
+def draw_badge(canvas, text, layout, msg: str, level: str) -> None:
+    """Calibration badge in the top-right corner of the camera image (green ok / orange warn / red bad)."""
+    from .ui import blit, round_rect
+    if not msg:
+        return
+    spr = text.sprite(msg, 14, (255, 255, 255))
+    h, w = spr.shape[:2]
+    x1, y0 = layout.img_w - 10, layout.top_h + 10
+    color = {"ok": (60, 150, 60), "warn": (0, 140, 230), "bad": (40, 40, 210)}[level]
+    round_rect(canvas, x1 - w - 16, y0, x1, y0 + h + 10, color, 0.85, r=8)
+    blit(canvas, spr, x1 - w - 8, y0 + 5)
+
+
 def start_stall_watch(beat: list, path, limit_s: float = 3.0) -> None:
     """Diagnosis: if the main loop does not come round for limit_s, dump every thread's stack to `path`
     (once per stall) and print a warning. Validation runs in a worker, so normal loops are << limit_s."""
@@ -256,7 +280,12 @@ def main(argv=None):
     ap.add_argument("--camera", default="side_cam", choices=["side_cam", "side_cam_alt"],
                     help="fixed camera shown in the second window")
     ap.add_argument("--monitor-calib", help="camera calibration JSON for the monitor (default: the sim camera)")
-    ap.add_argument("--video", help="real camera for the monitor: device index or video file (needs --monitor-calib)")
+    ap.add_argument("--video", help="real camera for the monitor: device index, 'auto' (the Astra colour camera found "
+                    "by name, pac_vision camera.yaml rgb.name_match) or a video file (needs --calib)")
+    ap.add_argument("--allow-unverified-calib", action="store_true",
+                    help="rehearsal only: use a calibration that failed its checks, differs from the current "
+                         "pac_vision settings or came from another camera/USB port. The overlay is shown as "
+                         "UNVERIFIED and the 3-D pinch stays off")
     ap.add_argument("--side-pos", default="auto",
                     help="side_cam window top-left 'x,y' in screen pixels (auto: right edge of the primary monitor)")
     ap.add_argument("--side-scale", default="auto",
@@ -284,22 +313,60 @@ def main(argv=None):
                          "so right = +X, away = +Y)")
     ap.add_argument("--robot-pose", metavar="X,Y,YAW_DEG",
                     help="where the robot base centre stands in the calibration frame (m on the desk) and which "
-                         "way it faces (deg, counter-clockwise from +X seen from above); default 0,0,0 = on the "
-                         "calibration origin facing +X")
+                         "way it faces (deg, counter-clockwise from +X seen from above); default: robot_pose.yaml "
+                         "next to --calib if it exists, else 0,0,0 = on the calibration origin facing +X")
     ap.add_argument("--depth", action="store_true",
                     help="Astra depth (pac_vision, OpenNI2) for the hand: a pinch moves the grabbed point by the "
                          "hand's 3-D motion, 1:1 (needs --hand, --video and a real pac_vision --calib)")
     a = ap.parse_args(argv)
-    if a.robot_pose:
+    pose_file = Path(a.calib).resolve().parent / "robot_pose.yaml" if a.calib else None
+    if a.robot_pose or (pose_file is not None and pose_file.exists()):
         from .canvas import set_robot_pose
         try:
-            rx, ry, ryaw = [float(v) for v in a.robot_pose.split(",")]
-        except ValueError:
-            ap.error("--robot-pose: X,Y,YAW_DEG (three numbers)")
+            if a.robot_pose:
+                rx, ry, ryaw = [float(v) for v in a.robot_pose.split(",")]
+                src = "--robot-pose"
+            else:
+                import yaml
+                doc = yaml.safe_load(pose_file.read_text(encoding="utf-8")) or {}
+                rx, ry, ryaw = float(doc["x_m"]), float(doc["y_m"]), float(doc["yaw_deg"])
+                src = str(pose_file)
+        except (ValueError, KeyError, TypeError):
+            ap.error("--robot-pose: X,Y,YAW_DEG (three numbers); robot_pose.yaml: x_m, y_m, yaw_deg")
         set_robot_pose(rx, ry, ryaw)
-        print(f"robot base in the calibration frame: x={rx:.3f} y={ry:.3f} m, facing {ryaw:.1f} deg", flush=True)
+        print(f"robot base in the calibration frame: x={rx:.3f} y={ry:.3f} m, facing {ryaw:.1f} deg ({src})",
+              flush=True)
     if a.depth and (a.hand is None or not a.video or not a.calib):
         ap.error("--depth needs --hand, --video (the Astra colour camera) and --calib (pac_vision cam2base.yaml)")
+    calib_trust = ""            # "" = no real camera calibration in use; "file_ok" / "unverified" (see pac_calib)
+    if a.calib:
+        from .pac_calib import calibration_problems, find_video_device, identity_problems, is_pac_vision_file
+        real = is_pac_vision_file(a.calib)
+        if real and not a.video and not a.canvas:
+            ap.error("--calib with a real pac_vision calibration needs --video (the Astra colour camera): it would "
+                     "be drawn over the simulator's own camera image, where it cannot match")
+        if a.video and not real:
+            ap.error("--video (real camera) needs a real pac_vision calibration, not the mock / sim camera file")
+        if real and a.video:
+            problems = calibration_problems(a.calib)
+            if a.video == "auto" or a.video.isdigit():
+                if a.video == "auto":
+                    from pac_vision.config import load_config as pv_load_config
+                    match = pv_load_config(Path(a.calib).resolve().parent, ("camera",))["camera"]["rgb"].get(
+                        "name_match", "Astra")
+                    dev = find_video_device(str(match))
+                    if dev is None:
+                        ap.error(f"--video auto: no camera named like '{match}' gives frames. {camera_list()}")
+                    a.video = str(dev)
+                    print(f"video: /dev/video{dev} (auto, name contains '{match}')", flush=True)
+                problems += [f"camera identity: {p} - same camera on the same USB port as the calibration?"
+                             for p in identity_problems(a.calib, int(a.video))]
+            for p in problems:
+                print(f"CALIBRATION: {p}", flush=True)
+            if problems and not a.allow_unverified_calib:
+                ap.error("the calibration is not usable for this camera (see CALIBRATION lines above); calibrate "
+                         "again, or --allow-unverified-calib for a rehearsal (overlay unverified, no 3-D pinch)")
+            calib_trust = "unverified" if problems else "file_ok"
 
     cfg = load_config()
     if a.work_height is not None:
@@ -398,6 +465,14 @@ def main(argv=None):
         source = SimFrameSource(m, renderer, a.camera)
     print(f"monitor: {cam_model.name} {cam_model.width}x{cam_model.height}, "
           f"frames from {'video ' + a.video if a.video else 'sim camera ' + a.camera}", flush=True)
+    marker_mon = None
+    if calib_trust:
+        # the file passing its checks is not enough: fixed markers (markers.yaml next to the calibration) must agree
+        # on the live image before the overlay / 3-D pinch count as calibrated
+        from .pac_calib import MarkerMonitor
+        marker_mon = MarkerMonitor(cam_model, Path(a.calib).resolve().parent / "markers.yaml")
+        session.calib_state = "unverified" if calib_trust == "unverified" else marker_mon.state
+        print(f"calibration: {calib_text(session.calib_state, marker_mon)}", flush=True)
     # 16:10 camera image (render W x H, scaled), progress strip above, buttons below (ui.py)
     mons = monitors()
     layout = auto_layout(cam_model.width, cam_model.height, a.side_scale, mons[0] if mons else None)
@@ -522,7 +597,12 @@ def main(argv=None):
                        f"frame {frame}  t={t_sim:.2f}s\n " + ("\n " if ov.peak is not None else "")))
             viewer.sync()
             # path etc. as a projected 2-D graph; on a real camera image only the path, A, B and the axes
-            img = draw_overlay_2d(source.frame(), cam_model, ov, minimal=bool(a.video))
+            raw = source.frame()
+            if marker_mon is not None and marker_mon.update(raw, time.monotonic()) and calib_trust == "file_ok":
+                session.calib_state = marker_mon.state
+                session._emit(f"camera calibration {marker_mon.state}: {marker_mon.text()}", "calib",
+                              calib=marker_mon.state)
+            img = draw_overlay_2d(raw, cam_model, ov, minimal=bool(a.video))
             if a.canvas or (a.video and a.calib):
                 from .canvas import draw_ab, draw_axes
                 if a.video:
@@ -541,6 +621,9 @@ def main(argv=None):
                 hand_ctrl.draw(img, layout.top_h, cam_model, layout.scale,
                                landmarks=lm if shared and not a.no_hand_preview else None,
                                img_wh=(layout.img_w, layout.img_h), text=ui.text)
+            if session.calib_state:
+                draw_badge(img, ui.text, layout, calib_text(session.calib_state, marker_mon),
+                           CALIB_LEVEL.get(session.calib_state, "warn"))
             cv2.imshow(WIN, img)
             if snap_dir and session.state != last_state:
                 cv2.imwrite(str(snap_dir / f"f{frame:05d}_{session.state}.png"), img)

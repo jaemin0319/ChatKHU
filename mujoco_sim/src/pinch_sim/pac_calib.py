@@ -12,8 +12,14 @@ and offers the small CameraModel interface the monitor, the mouse / hand picking
 (width, height, project, pixel_ray, scaled_to). World is the simulator frame; base is converted with
 canvas.CAL_FROM_WORLD (base_ref: +X forward, +Y left, +Z up).
 
-pac_vision is imported from $PAC_VISION_SRC, the `src` folder next to the calibration file
-(pac_vision/config/cam2base.yaml -> pac_vision/src), or a pac_vision folder next to mujoco_sim.
+pac_vision is imported from the pac_vision folder next to mujoco_sim (this repository), else $PAC_VISION_SRC, else
+the `src` folder next to the calibration file (pac_vision/config/cam2base.yaml -> pac_vision/src).
+
+A calibration file is not trusted just because it exists (calibration_problems): a failed result (passed: false),
+the format example, settings that differ from the current pac_vision config (registration, intrinsics, flip, ...)
+are refused unless the user asks for an unverified run. Even an accepted file only says the A4 points matched at
+calibration time; MarkerMonitor checks fixed ArUco markers (pac_vision config/markers.yaml, measured, not used in
+the calibration) on the live image, and only "verified" counts as a matching overlay / usable 3-D pinch.
 """
 from __future__ import annotations
 
@@ -26,6 +32,8 @@ import yaml
 
 from .canvas import cal_to_world, world_to_cal
 
+REPO_PAC_VISION = Path(__file__).resolve().parents[3] / "pac_vision"
+
 
 def is_pac_vision_file(path: str | Path) -> bool:
     """A real calibrate.py result (not our MOCK file): has the registration coefficients of the colour camera."""
@@ -35,9 +43,8 @@ def is_pac_vision_file(path: str | Path) -> bool:
 
 
 def _import_pac_vision(calib: Path):
-    candidates = [os.environ.get("PAC_VISION_SRC"), calib.resolve().parent.parent / "src",
-                  Path(__file__).resolve().parents[3] / "pac_vision" / "src",          # pac_vision next to mujoco_sim
-                  Path.home() / "research/manipulator/26_project_manipulator/pac_vision/src"]
+    candidates = [REPO_PAC_VISION / "src",                      # this repository's pac_vision first (same version)
+                  os.environ.get("PAC_VISION_SRC"), calib.resolve().parent.parent / "src"]
     for c in candidates:
         if c and (Path(c) / "pac_vision" / "cam2base.py").exists():
             if str(c) not in sys.path:
@@ -119,3 +126,127 @@ class PacVisionCamera:
 def load_camera(path: str | Path, fallback_loader):
     """Real pac_vision result -> PacVisionCamera; anything else (our MOCK file) -> fallback_loader(path)."""
     return PacVisionCamera.load(path) if is_pac_vision_file(path) else fallback_loader(path)
+
+
+def calibration_problems(path: str | Path) -> list[str]:
+    """Why a real pac_vision cam2base.yaml must not be trusted for the live camera ([] = file is acceptable).
+
+    Compared with the CURRENT pac_vision config of the calibration's folder (camera.yaml + local.yaml + pose.yaml),
+    which is also what the depth stream is opened with."""
+    path = Path(path)
+    if path.name.endswith(".example.yaml"):
+        return ["this is the format example, not a calibration (run pac_vision/scripts/calibrate.py)"]
+    if not is_pac_vision_file(path):
+        return ["not a pac_vision calibration (mock / sim camera file)"]
+    pv = _import_pac_vision(path)
+    from pac_vision.config import load_config
+    conv = pv.load_cam2base(path)
+    out = []
+    if not conv.info.get("passed", False):
+        out.append("calibration did not pass its checks (passed: false) - calibrate again")
+    cur = load_config(path.resolve().parent, ("camera",))["camera"]
+    for m in pv.calibration_mismatches(conv, cur):
+        out.append(f"camera setting '{m}' differs from the current pac_vision config (pose.yaml / camera.yaml): "
+                   "calibrate again with the current settings")
+    return out
+
+
+def identity_problems(path: str | Path, video_device: int) -> list[str]:
+    """The colour camera opened now vs the one recorded in cam2base.yaml (USB port / name). [] = same or unknown."""
+    pv = _import_pac_vision(Path(path))
+    from pac_vision.devices import identity_problems as _problems, rgb_identity
+    conv = pv.load_cam2base(path)
+    return [p for p in _problems(conv.info.get("camera_identity"), rgb_identity(video_device)) if p != "no_identity"]
+
+
+def find_video_device(name_match: str = "Astra", root="/sys/class/video4linux", can_open=None) -> int | None:
+    """Smallest /dev/videoN whose name contains name_match and that gives a frame (pac_vision _ui.open_rgb rule).
+
+    An Astra Pro shows two nodes with the same name; the colour stream is the one that gives frames."""
+    cands = []
+    for p in Path(root).glob("video*"):
+        try:
+            name = (p / "name").read_text(encoding="utf-8").strip()
+            n = int(p.name[5:])
+        except (OSError, ValueError):
+            continue
+        if name_match.lower() in name.lower():
+            cands.append(n)
+    if can_open is None:
+        def can_open(n):
+            import cv2
+            cap = cv2.VideoCapture(n, cv2.CAP_V4L2)
+            ok = cap.isOpened() and cap.read()[0]
+            cap.release()
+            return ok
+    return next((n for n in sorted(cands) if can_open(n)), None)
+
+
+class MarkerMonitor:
+    """Fixed ArUco markers on the live colour image (pac_vision markers.py) -> is the overlay still calibrated?
+
+    state: "verified" (all visible markers within tolerance, enough of them), "moved" (a visible marker is off: the
+    camera moved/turned, a marker moved, or the calibration is wrong), "not_visible" (too few markers seen, for
+    `lost_after_s` once verified), "no_config" (no markers.yaml next to the calibration), "checking" (not decided).
+    A change needs `confirm` agreeing checks in a row (one odd frame is not a camera move). "moved" stays until the
+    markers agree again for `confirm` checks. Only "verified" makes the overlay and the 3-D pinch count as calibrated.
+    """
+
+    def __init__(self, cam: "PacVisionCamera", markers_path: str | Path | None, period_s: float = 0.5,
+                 confirm: int = 2, lost_after_s: float = 5.0):
+        self.cam, self.period_s, self.confirm, self.lost_after_s = cam, period_s, confirm, lost_after_s
+        self.mset = None
+        self.path = Path(markers_path) if markers_path else None
+        if self.path is not None and self.path.exists():
+            from pac_vision.markers import load_markers
+            self.mset = load_markers(self.path)
+        self.state = "checking" if self.mset is not None else "no_config"
+        self.result = None                # last pac_vision VerifyResult
+        self._last_t = -1e9
+        self._streak: tuple[str, int] = ("", 0)
+        self._last_ok_t: float | None = None
+
+    @property
+    def verified(self) -> bool:
+        return self.state == "verified"
+
+    def text(self) -> str:
+        r = self.result
+        if self.state == "no_config":
+            return "정합 미검증: 기준 표지 설정 없음 (markers.yaml)"
+        if self.state == "checking":
+            return "정합 확인 중 (기준 표지)"
+        if self.state == "moved":
+            return "카메라가 움직였어요 - 다시 보정하세요" + (f" ({r.summary()})" if r is not None else "")
+        if self.state == "not_visible":
+            return "정합 미검증: 기준 표지가 안 보여요"
+        return r.summary() if r is not None else "정합 확인됨"
+
+    def update(self, frame_bgr, now: float) -> bool:
+        """Check at most every period_s. True when the state changed."""
+        if self.mset is None or frame_bgr is None or now - self._last_t < self.period_s:
+            return False
+        self._last_t = now
+        from pac_vision.markers import detect, verify
+        h, w = frame_bgr.shape[:2]
+        res = verify(self.cam.conv, self.mset, detect(frame_bgr, self.mset.dictionary), rgb_size=(w, h),
+                     rgb_mirrored=self.cam.mirrored)
+        return self.apply(res, now)
+
+    def apply(self, res, now: float) -> bool:
+        """One verification result (pac_vision VerifyResult) -> state with confirmation. True when it changed."""
+        self.result = res
+        kind = res.state
+        if kind == "verified":
+            self._last_ok_t = now
+        n = self._streak[1] + 1 if self._streak[0] == kind else 1
+        self._streak = (kind, n)
+        old = self.state
+        if kind in ("verified", "moved"):
+            if n >= self.confirm:
+                self.state = kind
+        elif kind == "not_visible" and self.state != "moved" and n >= self.confirm:
+            # a hand over a marker for a moment keeps "verified"; only a longer gap says it cannot be verified
+            if self.state != "verified" or now - (self._last_ok_t or -1e9) >= self.lost_after_s:
+                self.state = "not_visible"
+        return self.state != old
