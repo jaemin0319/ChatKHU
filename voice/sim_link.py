@@ -300,6 +300,8 @@ class SimEditor:
 
     def _finish(self) -> dict[str, Any]:
         """"이 경로로 할게 / 수정 완료": 지금 경로를 검증하고, 통과하면 묻지 않고 그 경로로 움직인다 (시뮬레이터 전용)."""
+        if self._hand_timer is not None:
+            self._hand_timer.cancel()          # 방금 손 수정의 "경로를 수정했어요."는 검증 중에 늦게 말하지 않는다
         res = self._command('use_current_path', auto_run=True)
         if not res.get('accepted'):
             if res.get('reason_code') == 'STALE_REVISION':
