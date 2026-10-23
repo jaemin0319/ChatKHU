@@ -35,7 +35,8 @@ from pathlib import Path
 PROTOCOL = 1
 # commands whose request must name the state revision it was decided on (stale answers are refused)
 REV_CHECKED = ("start_edit", "continue_edit", "undo_last_edit", "reset_to_original", "use_current_path",
-               "new_target", "return_home", "move_point", "redo_last_edit", "return_reverse", "edit_return", "resume")
+               "new_target", "return_home", "move_point", "redo_last_edit", "return_reverse", "edit_return", "resume",
+               "vision_target")
 # no revision check: always safe / read-only / link bookkeeping
 UNCHECKED = ("stop", "status", "cancel_auto_run", "save_paths")
 COMMANDS = REV_CHECKED + UNCHECKED
@@ -135,6 +136,9 @@ class Dispatcher:
                     return False, "BUSY", s.state
                 ok = s.cmd_new_target(d)
                 return ok, "NO_TARGET", ""
+            if cmd == "vision_target":
+                ok, code = s.cmd_vision_target(d)
+                return ok, code, {"target": None if s.target is None else s.target.summary()} if ok else s.message
             if cmd == "return_home":
                 if s.state not in ("HOLD", "DONE", "ABORTED"):
                     s._emit(f"H ignored in {s.state}", "refused")

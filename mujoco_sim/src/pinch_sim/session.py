@@ -140,6 +140,8 @@ class Session:
         # Kept while the user fixes the path (drawn in red) until the next validation or a new path.
         self.last_failures: list = []
         self.fail_at_pct: float | None = None
+        # set by the app with a depth camera: () -> (object top in world m, "") or (None, reason) (vision_goal.py)
+        self.vision_target = None
         self._actor, self._request_id = "sim", ""
 
     # ------------------------------------------------------------------ bookkeeping
@@ -358,6 +360,29 @@ class Session:
         self.target_label = "A/B"
         ok = self._use_target(t, d, extra="fixed A/B")
         return ok, "" if ok else self.message
+
+    def cmd_vision_target(self, d) -> tuple[bool, str]:
+        """G / voice: the object the camera sees on the desk becomes the target (key G, vision_goal.py).
+
+        object_top (world) from the app's provider; tcp_goal = object_top + work height, approach = object_top +
+        approach height (the same rule as a desk target, measured from the object's top instead of the desk).
+        The robot stays where it is; the new initial path starts at its actual TCP."""
+        if self.state in ("EXECUTING", "VALIDATING"):
+            self._emit(f"camera target ignored in {self.state}", "refused")
+            return False, "BUSY"
+        if self.vision_target is None:
+            self._emit("camera target refused: no depth camera (--depth)", "refused")
+            return False, "NO_CAMERA_TARGET"
+        top, why = self.vision_target()
+        if top is None:
+            self._emit(f"camera target refused: {why}", "refused")
+            return False, why.upper()
+        tc, b = self.cfg["target"], np.asarray(top, float)
+        t = TargetSpec(float(np.hypot(b[0], b[1])), float(np.arctan2(b[0], b[1])), b.copy(),
+                       b + [0.0, 0.0, tc["work_height_m"]], b + [0.0, 0.0, tc["approach_height_m"]], DOWN.copy())
+        self.target_label = "camera"
+        ok = self._use_target(t, d, extra=f"camera object top {np.round(b, 3).tolist()} (world)", kind="new_target")
+        return ok, "" if ok else "NO_PATH"
 
     def cmd_fixed_target(self, r_m: float, theta_deg: float, d) -> bool:
         if self.state in ("EXECUTING", "VALIDATING"):
@@ -913,6 +938,7 @@ class Session:
         key = key.upper()
         {"N": lambda: self.cmd_new_target(d), "S": self.cmd_select, "V": lambda: self.cmd_validate(d),
          "Y": lambda: self.cmd_approve(d), "H": lambda: self.cmd_return(d), "E": self.toggle_edit_mode,
+         "G": lambda: self.cmd_vision_target(d),
          "X": lambda: self.cmd_cancel(d), "U": lambda: self._edit_history("undo"),
          "R": lambda: self._edit_history("redo"), "O": lambda: self._edit_history("reset")}.get(key, lambda: None)()
 

@@ -269,8 +269,14 @@ class SimEditor:
             return self._move(name, args)
         # 직전 말 수정의 단계는 수정 기록이 바뀔 때만 잊는다. 멈춤·이동·수정 완료 뒤 같은 길의 수정으로
         # 돌아오면(back_to_edit) "조금만 더"가 그 수정을 이어서 조절해야 하기 때문이다.
-        if name in ('undo_edit', 'reset_edit', 'new_target', 'edit_return_path'):
+        if name in ('undo_edit', 'reset_edit', 'new_target', 'edit_return_path', 'set_target_from_camera'):
             self.ladder.forget()
+        if name == 'set_target_from_camera':
+            res = self._command_fresh('vision_target')
+            if not res.get('accepted'):
+                return {'status': 'failed', 'reason': str(res.get('reason_code', 'refused')).lower()}
+            return {'status': 'applied', 'say': '카메라로 찾은 물체 위로 목표를 바꾸고 새 경로를 만들었어요. '
+                                                '고치려면 경로 수정할래, 이대로 가려면 수정 완료라고 말씀해 주세요.'}
         if name in MOTION_FUNCTIONS:
             return self._motion(name)
         if name == 'start_edit':

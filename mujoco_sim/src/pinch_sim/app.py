@@ -519,6 +519,30 @@ def main(argv=None):
         hand_editor = MouseEditor(cam_model, cfg, layout.scale)      # same geometry as the mouse ...
         hand_editor.radius = hcfg.select_radius_px                  # ... with a wider pick radius
         session.hand_mode = "3d" if hand_depth is not None else "2d"
+    if depth_src is not None:
+        # key G / voice "이 물체로 목표 바꿔 줘": the object on the desk in the depth frame the sim already reads
+        from .canvas import cal_to_world, world_to_cal
+        from .vision_goal import VisionGoalConfig, choose, find_objects
+        vg_cfg = VisionGoalConfig()
+
+        def vision_target():
+            if session.calib_state != "verified":
+                return None, "calib_unverified"
+            depth_now, t_d = depth_src.latest()
+            if depth_now is None or time.monotonic() - t_d > 0.5:
+                return None, "no_depth"
+            base_xy = np.asarray(world_to_cal([0.0, 0.0, 0.0]), float).reshape(-1)[:2]   # robot base, base_ref
+            objs = find_objects(cam_model.conv, depth_now, base_xy, vg_cfg)
+            near = None                                  # a pointing finger chooses among several objects
+            g = hand_ctrl.gesture if hand_ctrl is not None else None
+            if g is not None and g.kind == "point" and hand_ctrl.cursor_px is not None:
+                u, v = hand_ctrl.cursor_px[0] / layout.scale, hand_ctrl.cursor_px[1] / layout.scale
+                near = np.asarray(world_to_cal(cam_model.desk_point(u, v)), float).reshape(-1)[:2]
+            obj, why = choose(objs, near)
+            print(f"camera target: {len(objs)} object(s) " + (f"-> top {np.round(obj.top_base, 3).tolist()} m "
+                  f"(base_ref, {obj.n_points} points)" if obj is not None else f"-> none ({why})"), flush=True)
+            return (None, why) if obj is None else (cal_to_world(obj.top_base), "")
+        session.vision_target = vision_target
         print(f"hand input: camera {a.hand} (point = select, pinch = drag "
               f"{'in 3-D with depth' if hand_depth is not None else 'height only (2-D mode, no depth)'}; "
               "only in edit mode: E or voice)", flush=True)
