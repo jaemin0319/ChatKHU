@@ -39,6 +39,15 @@ QUIT_WORDS = {'q', 'quit', 'exit', '종료'}
 _TRANSCRIPT_MARKUP = re.compile(r'<[^<>]*>|\{[^{}]*\}')
 
 
+def announcement_message(text: str) -> str:
+    """시뮬레이터 알림을 AI가 읽게 보내는 메시지. 질문 문장(«…?»)이면 AI가 그 질문에 답하려 들어 문장을 바꿔
+    말했다(2026-10-23 ChatKHU 시험: 도착 질문 2번 모두). 그래서 메시지 안에서 다시 '그대로 읽기'를 못 박는다."""
+    head = '[시뮬레이터 알림] 아래 « » 안의 문장을 한 글자도 바꾸지 말고 사용자에게 그대로 한 번 말한다. 함수는 부르지 않는다.'
+    if text.endswith('?'):
+        head += ' 이 문장은 앱이 사용자에게 하는 질문이다. 네가 답하지 말고 질문 그대로 읽는다.'
+    return f'{head} «{text}»'
+
+
 def clean_transcript(text: str) -> str:
     """자막에 섞여 오는 표시(예: '<noise>')를 뺀다."""
     return ' '.join(_TRANSCRIPT_MARKUP.sub('', text).split())
@@ -293,7 +302,7 @@ class LiveAssistant:
             self._turn = Turn(user=f'[알림] {text}')
             self._turn_done.clear()
             await ws.send(json.dumps({'clientContent': {'turns': [{'role': 'user', 'parts': [
-                {'text': f'[시뮬레이터 알림] «{text}»'}]}], 'turnComplete': True}}))
+                {'text': announcement_message(text)}]}], 'turnComplete': True}}))
 
     # ------------------------------------------------------------------ 수신
     async def _receive_loop(self, ws) -> None:
@@ -379,6 +388,8 @@ class LiveAssistant:
             self._logger.write(turn, fail_mode=self._editor.fail_mode)
             if turn.user and not turn.user.startswith('[알림]'):
                 self._gate.close_question()   # 질문의 답은 한 번만 (함수를 불렀든 "아니"였든)
+            elif turn.user.startswith('[알림]') and turn.user.endswith('?'):
+                self._gate.question_spoken()  # 답할 시간은 질문을 다 말한 뒤부터
         self._turn_done.set()
 
     # ------------------------------------------------------------------ 함수 호출

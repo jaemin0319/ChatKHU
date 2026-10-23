@@ -151,6 +151,12 @@ class WakeGate:
         rev: 질문할 때 시뮬레이터 상태 번호. 그 사이 상태가 바뀌면 질문은 지난 것이다."""
         self._question = (frozenset(functions), rev, self._clock() + self.answer_seconds)
 
+    def question_spoken(self) -> None:
+        """AI가 질문을 다 말했다: 답할 시간(answer_seconds)을 이때부터 센다 (말하는 동안 시간이 줄지 않게)."""
+        if self._question is not None:
+            functions, rev, _ = self._question
+            self._question = (functions, rev, self._clock() + self.answer_seconds)
+
     @property
     def question_open(self) -> bool:
         return self._question is not None and self._clock() < self._question[2]

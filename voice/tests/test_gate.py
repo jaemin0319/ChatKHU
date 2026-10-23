@@ -4,6 +4,7 @@
 - 질문의 답은 한 번, 그 질문이 허용한 함수만, 시뮬레이터 상태(rev)가 그대로일 때만.
 """
 from voice.config import load_config
+from voice.session import announcement_message
 from voice.sim_link import ASK_ARRIVED, ASK_HOME, ASK_STOPPED, SimEditor
 from voice.wake_word import WakeGate, gate_decision
 
@@ -62,6 +63,16 @@ def test_question_expires_on_time_and_on_state_change():
     assert not g.question_open and g.answer_check('new_target', 3) == 'expired'
 
 
+def test_answer_time_counts_from_the_end_of_the_spoken_question():
+    c = Clock()
+    g = _gate(c)
+    g.ask(SimEditor.question_functions(ASK_HOME), rev=3)
+    c.t += 5                                                           # 쿠옹이가 질문을 말하는 데 5초
+    g.question_spoken()
+    c.t += 18                                                          # 다 말한 뒤 18초: 아직 답할 수 있다
+    assert g.answer_check('save_paths', 3) == 'allowed'
+
+
 def test_wake_window_is_not_extended_by_talk_alone():
     c = Clock()
     g = _gate(c)
@@ -81,6 +92,13 @@ def test_answer_sets_for_the_app_questions():
     assert SimEditor.question_functions(ASK_ARRIVED) == {'edit_return_path', 'start_edit', 'go_back'}
     assert SimEditor.question_functions(ASK_HOME) == {'new_target', 'save_paths'}
     assert SimEditor.question_functions('위로 올릴까요, 옆으로 옮길까요?') is None   # AI 자신의 질문은 아님
+
+
+def test_a_question_announcement_says_read_it_do_not_answer_it():
+    """ChatKHU 시험(2026-10-23): «…?» 알림을 질문으로 받아 답하려다 문장을 바꿨다 → 메시지에서 그대로 읽기를 못 박는다."""
+    q = announcement_message(ASK_HOME)
+    assert q.endswith(f'«{ASK_HOME}»') and '답하지 말고' in q
+    assert '답하지 말고' not in announcement_message('검증을 통과했어요. 이동을 시작할게요.')
 
 
 def test_config_defaults_are_the_safe_ones():
