@@ -1,0 +1,297 @@
+# 핀치·쿠옹이·MuJoCo 시연: 설치부터 실행까지 (`~/pinch_khu_ws`)
+
+이 문서만 따라 하면 다른 노트북에서도 같은 시연을 재현할 수 있게 썼다. 명령은 2026-10-23 연구실 노트북(Ubuntu 24.04.5, Python 3.12.3, ROS 2 Jazzy 설치됨, NVIDIA RTX 5060 + Wayland)에서 실행해 본 것이다. 그 노트북에서 확인하지 못한 단계는 **미확인**으로 따로 표시했다(맨 아래 "확인 범위").
+
+- 범위: **MuJoCo 시뮬레이터 전용.** 실제 로봇은 움직이지 않는다. 검증·좌표는 시뮬레이터 모델 기준이며 실물 로봇의 동작 가능성을 보증하지 않는다.
+- **컴퓨터마다, 카메라를 놓을 때마다 보정을 새로 한다.** 다른 사람의 `pose.yaml`, `cam2base.yaml`, `markers.yaml`을 가져다 쓰지 않는다(시뮬레이터가 다른 카메라·다른 설정의 보정은 거부한다).
+- 설계와 결정 근거: [PINCH_KHU_INTEGRATION_PLAN.md](PINCH_KHU_INTEGRATION_PLAN.md) (계획서 원문, 구현 중 코드에 맞춰 바로잡은 점은 이 문서 "계획과 달라진 점"에 있다).
+
+## 0. 시연 흐름 (사용자가 보는 것)
+
+1. 터미널 1에서 시뮬레이터: MuJoCo 3D 창 + 카메라 모니터 창(실제 Astra 영상 위에 로봇 기준축 · 시작점 A · 목표점 B · 경로). 모니터 오른쪽 위 배지가 정합 상태를 보여 준다(초록 = 고정 표지로 확인됨).
+2. 터미널 2에서 쿠옹이. **"쿠옹아, 경로 수정할래"** → 시뮬레이터가 실제로 수정 모드가 된 뒤 쿠옹이가 "네. 손가락으로 경로를 수정해 주세요. …"라고 안내한다. 음성 없이 할 때는 **E 키**.
+3. 검지로 경로 안쪽 점을 0.4초 가리키면 노란 점으로 고르고, 엄지·검지로 집어 손을 움직이면 그 점과 주변이 손의 3D 이동만큼 따라온다. 손을 펴면 확정. 깊이를 못 읽으면 잡지 않고 이유를 말해 준다(높이 수정으로 몰래 바뀌지 않는다).
+4. "쿠옹아, 이전으로" → 직전 수정 하나 되돌리기 (손·마우스·말 수정이 같은 기록).
+5. **"이 경로로 할게" / "수정 완료"** → 검증 → 실패면 빨간 점과 이유, 수정 모드로 복귀 → 통과면 "검증을 통과했어요. 이동을 시작할게요."와 함께 **묻지 않고** 그 경로로 이동. 언제든 **X 키** 또는 "멈춰".
+6. (별도 단계) **G 키** 또는 "쿠옹아, 이 물체로 목표 바꿔 줘" → 카메라가 본 책상 위 물체 위로 목표가 바뀌고 새 경로가 생긴다.
+
+## 1. 저장소와 작업 브랜치
+
+```bash
+mkdir -p ~/pinch_khu_ws && cd ~/pinch_khu_ws
+git clone https://github.com/jaemin0319/26_project_manipulator.git      # 비공개: gh auth login 먼저
+cd 26_project_manipulator
+git switch work/pinch-khu-demo        # 원격에 올라간 뒤. 올리기 전이면 이 노트북의 로컬 브랜치뿐이다
+```
+
+- 기준: `chatkhu/voice-mujoco-path-edit`(c4058e4)에서 만든 `work/pinch-khu-demo`. 다른 원격 브랜치는 그대로 두고 병합하지 않았다(근거: 계획서 §1).
+- `main`에 직접 올리지 않는다. 이미 저장소가 있으면 `git status`로 변경 사항을 먼저 확인하고 덮어쓰지 않는다.
+
+## 2. 시스템 패키지 (한 번, 관리자 비밀번호 필요)
+
+```bash
+sudo apt install -y git python3.12-venv python3-pip libportaudio2 fonts-noto-cjk x11-utils x11-xserver-utils \
+                    v4l-utils mesa-utils libopenni2-dev
+```
+
+| 패키지 | 왜 |
+|---|---|
+| python3.12-venv, python3-pip | 가상환경. Ubuntu 기본 파이썬에는 ensurepip가 없다 |
+| libportaudio2 | 마이크·스피커(sounddevice). 없으면 쿠옹이 음성 모드가 `PortAudio library not found`로 멈춘다 |
+| fonts-noto-cjk | 모니터 창 한글 |
+| x11-utils, x11-xserver-utils | 창 배치, GUI 스모크 시험(xwininfo, xwd) |
+| v4l-utils, mesa-utils | 카메라·그래픽 확인(v4l2-ctl, glxinfo) |
+| libopenni2-dev | OpenNI2 (Astra 깊이). Orbbec 드라이버는 3절에서 따로 받는다 |
+
+관리자 권한이 없어 `python3.12-venv`를 못 깔 때(이 노트북에서 실제로 쓴 방법): `python3 -m venv --without-pip .venv`로 만든 뒤 PyPI의 pip wheel(sha256 확인)로 `python <pip.whl>/pip install <pip.whl>` 해서 pip를 넣는다.
+
+## 3. Astra 드라이버와 USB 권한
+
+```bash
+mkdir -p ~/pinch_khu_ws/vendor
+git clone --depth 1 https://github.com/orbbec/ros2_astra_camera.git ~/pinch_khu_ws/vendor/ros2_astra_camera   # 드라이버 파일만 씀 (빌드 안 함, 약 9 MB)
+cat > ~/pinch_khu_ws/26_project_manipulator/pac_vision/config/local.yaml <<'EOF'
+camera:
+  openni:
+    redist: ~/pinch_khu_ws/vendor/ros2_astra_camera/astra_camera/openni2_redist/x64
+EOF
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2bc5", MODE="0660", GROUP="plugdev"' | sudo tee /etc/udev/rules.d/99-orbbec.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger      # 그다음 카메라를 뽑았다 다시 꽂는다
+groups | grep -q plugdev || echo "plugdev 그룹이 아님: sudo usermod -aG plugdev $USER 후 다시 로그인"
+```
+
+- 우분투 `libopenni2-0`의 드라이버는 PS1080(키넥트류)뿐이라 Astra에는 Orbbec redist(`liborbbec.so`)가 필요하다.
+- `local.yaml`은 git 제외 파일이다(이 컴퓨터 경로).
+
+## 4. 파이썬 환경 두 개 (시뮬레이터 / 음성)
+
+ROS 2를 `~/.bashrc`에서 source하면 `PYTHONPATH`에 ROS 패키지가 섞인다. 아래 `env.sh` 두 개가 그 경로를 빼고 각자의 가상환경을 켠다. 두 환경을 섞지 않는다(시뮬레이터는 numpy 1.26, 음성은 numpy 2.x).
+
+```bash
+cd ~/pinch_khu_ws/26_project_manipulator/mujoco_sim
+python3 -m venv .venv
+source scripts/env.sh                         # ROS PYTHONPATH 제거 + .venv 켜기
+pip install -r requirements.lock              # mujoco 3.15.0, numpy 1.26.4, opencv-python 4.11
+python -m pinch_sim.build_scene               # 로봇 장면 생성 (저장소의 생성본과 같아야 함: git status 깨끗)
+pip install --no-deps mediapipe==0.10.21      # 이 두 줄 그대로 (그냥 깔면 numpy 2가 들어와 깨진다)
+pip install -r requirements-hand.txt          # "mediapipe requires jax / opencv-contrib" 경고는 정상
+pip install -r requirements-astra.txt         # pac_vision(-e) + openni 2.3.0
+python -m pytest -q                           # 148 passed (약 2~3분)
+(cd ../pac_vision && python -m pytest -q)     # 103 passed
+(cd "../path 편집" && python -m pytest -q)    # 110 passed
+deactivate
+
+cd ~/pinch_khu_ws/26_project_manipulator
+python3 -m venv .venv-voice
+.venv-voice/bin/pip install -r voice/requirements.txt pytest
+(source voice/env.sh; python -m pytest -q voice/tests)    # 13 passed
+```
+
+ChatKHU 키는 저장소 밖 파일에만 둔다(값을 터미널 기록에 남기지 않도록 편집기로 넣는다):
+
+```bash
+mkdir -p ~/.config/pinch_khu && install -m 600 /dev/null ~/.config/pinch_khu/env
+nano ~/.config/pinch_khu/env          # 한 줄: BAZE_API_KEY=발급받은_키
+```
+
+`source voice/env.sh`가 이 파일을 읽는다(권한이 600이 아니면 경고). 키가 없으면 쿠옹이는 `환경변수 BAZE_API_KEY가 비어 있습니다`로 멈추고 키 값은 출력하지 않는다.
+
+## 5. 카메라 확인
+
+```bash
+cd ~/pinch_khu_ws/26_project_manipulator/pac_vision && source ../mujoco_sim/scripts/env.sh
+lsusb | grep -i 2bc5                                    # Orbbec 장치
+for d in /sys/class/video4linux/video*; do echo "$d: $(cat $d/name)"; done
+python scripts/check_setup.py                           # 보정 전에는 pose.yaml·cam2base.yaml ⚠️가 정상
+```
+
+장치 번호를 어디에도 고정하지 않는다. 시뮬레이터 `--video auto`와 pac_vision 스크립트는 이름(`camera.yaml`의 `rgb.name_match: Astra`)으로 찾는다. 같은 이름의 노드가 둘이면 프레임이 나오는 쪽을 쓴다.
+
+카메라는 **한 프로그램만** 연다. 시뮬레이터와 pac_vision 스크립트가 같은 잠금(`$XDG_RUNTIME_DIR/pac_camera.lock`)을 써서, 다른 쪽이 쓰는 중이면 누가 쓰는지 알려 주고 열지 않는다.
+
+## 6. 보정 (카메라를 놓거나 옮길 때마다)
+
+순서: ① 정합(RGB↔depth) → ② A4 보정 → ③ 고정 표지로 독립 확인 → ④ 로봇 위치. 자세한 화면 안내는 `pac_vision/CALIBRATION_GUIDE.md`.
+
+### ① RGB↔depth 정합 (이 카메라, 이 설치 자세)
+
+```bash
+python scripts/check_camera.py          # RGB 창 클릭 → depth 창 클릭 = 한 쌍. 화면 여기저기 20쌍쯤, q로 끝 (쌍 CSV 저장)
+python tools/fit_rgb_to_depth.py <저장된 쌍 CSV> --write-pose     # config/pose.yaml (git 제외) 생성
+```
+
+- 팀의 `pose_presets/astra_unit1.yaml`은 "카메라 실물 1" 전용이고, 그 카메라로도 다른 설치 자세에서 A4 변 오차가 약 1 cm라 변 검사(5 mm)를 못 넘었다는 기록이 있다(`pose_presets/README.md`). 기본값으로 복사하지 않는다.
+
+### ② A4 보정
+
+```bash
+python scripts/calibrate.py             # 배치 점검 → Enter → 원점·꼭짓점 1~4 클릭 → 검사 5가지 → 모두 ✓이면 s
+```
+
+- `cam2base.yaml`에 결과와 함께 **카메라 신원**(장치 이름, USB 포트 by-path)과 그때의 카메라 설정 사본이 들어간다.
+- 실패한 결과를 `s s`로 강제 저장하면(`passed: false`) 시뮬레이터가 거부한다. 리허설 때만 `--allow-unverified-calib`(겹침 미검증 배지, 3D 핀치 꺼짐).
+
+### ③ 고정 표지로 독립 확인 (보정에 쓰지 않은 점)
+
+`passed: true`는 보정 순간 A4 5점이 맞았다는 뜻일 뿐이다. 카메라가 밀리거나 돌았는지는 고정 표지로 본다.
+
+```bash
+cp config/markers.example.yaml config/markers.yaml
+python scripts/check_markers.py --sheet ~/markers_sheet.png     # 인쇄용 (기본 12 cm 표지 2개, A4 한 장)
+```
+
+1. 100 % 크기로 인쇄하고 자로 한 변이 `size_m`인지 확인한다.
+2. 보정 종이 밖, 로봇·손이 가리지 않는 책상 위 두 곳 이상에 평평하게 붙인다. 화면에서 한 변이 30 px 이상이어야 한다(비스듬히 보면 짧아진다).
+3. 각 표지 **중심**의 base_ref 좌표(m, A4 원점, +X = A4 화살표 방향, +Y = 왼쪽)를 줄자로 재서 `config/markers.yaml`에 적는다.
+4. 확인:
+
+```bash
+python scripts/check_markers.py         # 표지별 이미지 오차(px)·책상면 오차(mm), 결과는 config/markers.check.yaml (git 제외)
+```
+
+- 허용오차 출발값: 8 px, 10 mm(`markers.yaml`의 `max_pixel_px`, `max_desk_mm`). **현장에서 카메라를 건드리지 않고 5회 이상 잰 분포**를 보고 정한다(아래 8절 시험 A).
+- 시뮬레이터는 같은 폴더의 `markers.yaml`로 시작할 때와 0.5초마다 다시 확인한다. 두 번 연속 어긋나면 "카메라가 움직였어요 - 다시 보정하세요"(빨간 배지), 표지가 5초 넘게 안 보이면 "미검증". **초록(확인됨)일 때만** 실제 영상 겹침을 검증된 것으로 보고 3D 핀치·카메라 목표를 허용한다. 그렇지 않으면 마우스·말로 고치는 대체 시연이 된다.
+- `markers.yaml`이 없으면 "정합 미검증: 기준 표지 설정 없음" — 3D 핀치는 꺼진다.
+
+### ④ 로봇 위치 (보정 원점 = 로봇이라고 가정하지 않는다)
+
+로봇 바닥 중심(base_link 원점)의 base_ref 좌표와 로봇 앞이 +X에서 반시계로 몇 도인지 자로 재서 `pac_vision/config/robot_pose.yaml`(git 제외)에 적는다:
+
+```yaml
+x_m: -0.150      # 로봇 바닥 중심, A4 원점 기준 (m)
+y_m: 0.000
+yaw_deg: 0.0     # 로봇 앞(그리퍼가 뻗는 쪽)이 +X에서 반시계로
+measured: 2026-10-23 줄자
+```
+
+시뮬레이터는 `--robot-pose X,Y,YAW`가 있으면 그것을, 없으면 이 파일을 쓴다(시작할 때 어느 것을 썼는지 출력). 변환:
+
+```
+p_cam  = Z · K⁻¹ [u_d, v_d, 1]           (u_d, v_d) = RGB 픽셀의 depth 픽셀 (pose.yaml 정합), Z = depth_mm/1000 − z_offset
+p_base = R · p_cam + t                    cam2base.yaml (base_ref: A4 원점, +X 앞, +Y 왼쪽, +Z 위, 책상 z = 0)
+p_world = R_z(90° − yaw) · (p_base − (x, y, 0))   MuJoCo world (로봇 바닥 원점, 로봇 앞 = +Y)
+```
+
+확인: 시뮬레이터를 켜고 모니터의 A(시작점) 표시가 실제 로봇 TCP 근처에 오는지, 기준축이 종이 원점·화살표와 겹치는지 본다.
+
+## 7. 실행 (터미널 두 개)
+
+**터미널 1: 시뮬레이터**
+
+```bash
+cd ~/pinch_khu_ws/26_project_manipulator/mujoco_sim && source scripts/env.sh
+
+# (가) Astra 전부: 실제 영상 + 손(가리키기·3D 핀치) + 음성 + 카메라 목표(G)
+python -m pinch_sim.app --calib ../pac_vision/config/cam2base.yaml --video auto --hand --depth --voice-gateway \
+  --start 0,0,0.25 --goal 0,0.20
+#   (--robot-pose를 쓰려면 음수는 = 로 붙인다: --robot-pose=-0.15,0,0)
+
+# (나) 카메라 없이: 시뮬레이터 카메라 화면 + 마우스 + 음성
+python -m pinch_sim.app --target-r 0.275 --target-deg 10 --voice-gateway
+
+# (다) 깊이 없는 웹캠 손 입력 = 명시적 2D 모드 (높이만, 화면에 "2D 높이 모드"), 흰 바탕
+python -m pinch_sim.app --target-r 0.275 --target-deg 10 --canvas --hand 0 --voice-gateway
+```
+
+`voice gateway: .../voice.sock` 줄이 뜬 뒤 터미널 2를 켠다.
+
+**터미널 2: 쿠옹이**
+
+```bash
+cd ~/pinch_khu_ws/26_project_manipulator && source voice/env.sh
+python -m voice --sim             # 마이크
+python -m voice --sim --text      # 키보드로 문장 입력 (같은 ChatKHU, 같은 함수)
+python -m voice --list-mics       # 마이크 목록, --mic 번호로 고름
+```
+
+예전 ROS 쿠옹이(`manipulator_voice`, work/integration-all 브랜치)가 실행 중이면 새 쿠옹이는 시작하지 않는다. 시뮬레이터도 두 번째 음성 클라이언트는 거부한다(같은 소켓·같은 호출어 충돌 방지).
+
+### 조작
+
+| 하고 싶은 것 | 말 (쿠옹이) | 키 / 버튼 (모니터 창) | 손 / 마우스 |
+|---|---|---|---|
+| 수정 모드 켜기 | 쿠옹아, 경로 수정할래 | E | 마우스 끌기도 수정 모드를 켠다 |
+| 점 고르기 | (고른 뒤) 쿠옹아, 여기 위로 조금 | — | 검지 0.4초 가리키기 / 클릭 |
+| 점 옮기기 | 여기 위로 2센티, 가운데 왼쪽으로 많이 | — | 핀치로 집어 옮기기(3D) / 마우스 끌기(높이) |
+| 되돌리기 | 쿠옹아, 이전으로 | U (R 다시, O 처음 경로) | — |
+| 검증 → 자동 이동 | 쿠옹아, 이 경로로 할게 / 수정 완료 | S → V → Y (버튼은 지금처럼 수동) | — |
+| 정지 | 멈춰 (호출어 없이도) | **X** (확실한 정지 수단) | — |
+| 카메라 물체를 목표로 | 쿠옹아, 이 물체로 목표 바꿔 줘 (여러 개면 검지로 가리킨 채) | G | — |
+| 새 목표 / 홈 | 새 목표 / (도착 후 질문에 답) | N / H | — |
+
+호출어 규칙: "쿠옹아"를 부른 뒤 30초 동안 호출어 없이 말해도 된다. 이 시간은 명령이 실제로 실행되거나 손으로 고칠 때만 늘어난다. 쿠옹이(앱)가 질문하면("계속 갈까요, 돌아갈까요?") 그 질문의 답 **한 번**은 호출어 없이 받는다. 답이 될 수 있는 명령만 실행하고(예: 계속 가 / 돌아가), "아니"나 엉뚱한 말에는 아무것도 움직이지 않는다. 멈춤은 언제나 받는다.
+
+## 8. 현장 시험 (Astra·마이크가 있을 때, 결과를 기록)
+
+| 시험 | 방법 | 기록할 값 | 출발 기준 |
+|---|---|---|---|
+| A 표지 허용오차 | 카메라를 건드리지 않고 `check_markers.py` 5회 | px·mm 최대값 분포 | 최대값 + 여유로 `markers.yaml` 조정 |
+| B 카메라 이동 감지 | 시뮬레이터 실행 중 카메라를 1~2 cm 밀거나 2° 돌림 | 빨간 배지가 뜨는지, 걸린 시간 | 1초 안 |
+| C 화면 겹침 | 줄자로 잰 책상 위 점 3개를 모니터에서 클릭해 base 좌표 비교(`scripts/show_base_coords.py`) | 점별 오차 | ≤ 10 mm |
+| D 손 3 cm | 핀치로 잡고 자를 따라 3 cm 옮기기 10회 | 경로점 변위의 중앙값·최대 | 중앙값 오차 ≤ 1 cm |
+| E RGB↔depth 시간차 | 시뮬레이터 종료 시 출력 `rgb_depth_skew_ms` (p50, p95, max) | 분포 | p95 < 50 ms (`DepthConfig.max_skew_s`) |
+| F 깊이 끊김 | 핀치 중 손을 카메라 0.6 m 안으로 / 다른 손으로 가림 | 1초 뒤 취소·원복되는지, 쿠옹이 안내 | — |
+| G 음성 정지·에코 | 아래 절차 | 자기 음성 오작동 수, "멈춰" 성공 수 | 오작동 0 |
+| H 카메라 목표 | 물체 3종 × 위치 3곳에서 G, 줄자 비교 | 윗면 중심 오차 | ≤ 2 cm (기울어 보면 카메라 쪽 치우침 알려짐) |
+
+**시험 G (음성 정지와 스피커 에코)** — 기본 설정은 `mute_mic_while_speaking: true`, `listen_while_moving: false`(쿠옹이가 말하는 동안 마이크는 무음)라, 쿠옹이가 "이동을 시작할게요."라고 말하는 약 2초 동안의 "멈춰"는 들리지 않는다. 그동안은 **X 키**가 정지 수단이다.
+1. 기본 설정으로: 이동 시작 직후(쿠옹이 말 끝난 뒤) "멈춰" 5회 → 멈춘 횟수.
+2. `voice/config.yaml`에서 `listen_while_moving: true`로 바꾸고 스피커 볼륨 3단계에서: (a) 아무 말 없이 이동 5회 → 쿠옹이 자기 말이 끊기거나 명령으로 들어간 횟수, (b) 쿠옹이가 말하는 중 "멈춰" 5회 → 멈춘 횟수.
+3. (a)가 0이고 (b)가 모두 성공한 설정(볼륨, 이어폰 여부)일 때만 `listen_while_moving: true`를 쓴다. 아니면 false로 두고 X 키를 안내한다. 결과를 이 문서에 적는다.
+
+## 9. 장치·키가 없을 때의 대체 시연
+
+| 없는 것 | 대체 |
+|---|---|
+| Astra | 7절 (나): 시뮬레이터 카메라 + 마우스 끌기(높이) + 말 |
+| 보정 / 표지 | (가)를 `--allow-unverified-calib`로 리허설 (배지 빨강, 3D 핀치·카메라 목표 꺼짐) 또는 (나) |
+| 마이크·스피커·API 키 | `python -m voice --sim --text`(키 필요) 또는 키 없이 `python -m voice.sim_dryrun` |
+| 사람 손 | 마우스 |
+
+`voice.sim_dryrun`은 AI 없이 쿠옹이 함수를 직접 불러 시뮬레이터의 반응과 쿠옹이가 말할 문장을 보여 준다:
+
+```bash
+source voice/env.sh
+python -m voice.sim_dryrun --script "0.5:start_edit, 3:undo_edit, 5:finish_edit, 30:"
+python -m voice.sim_dryrun        # 한 줄에 하나: start_edit / move_region region=middle direction=up amount=small / finish_edit / stop_motion
+```
+
+## 10. 문제 해결
+
+- **시뮬레이터: `the calibration is not usable for this camera`** — 출력의 `CALIBRATION:` 줄이 이유다. `passed: false` → 다시 보정. `camera setting '...' differs` → `pose.yaml`/`camera.yaml`을 보정 뒤에 바꿨다 → 다시 보정(또는 `calibrate.py --replay <세션> --use-current-config`). `camera identity` → 보정 때와 다른 카메라 또는 다른 USB 포트 → 같은 포트에 꽂거나 다시 보정.
+- **`--calib with a real pac_vision calibration needs --video`** — 실제 보정을 시뮬레이터 카메라 영상에 겹칠 수는 없다. `--video auto`를 붙이거나 (나)를 쓴다.
+- **`--video auto: no camera named like 'Astra' gives frames`** — 5절. 다른 프로그램이 카메라를 쓰는지 `fuser -v /dev/video*`.
+- **`카메라를 pinch_sim (simulator) (PID …)이(가) 쓰고 있습니다`** — 그 프로그램을 끈다(카메라는 한 프로그램만).
+- **Astra 깊이가 안 열림 (`no devices found`)** — 3절 udev, 다시 꽂기, `local.yaml`의 redist 경로. `python scripts/check_setup.py`.
+- **배지 "카메라가 움직였어요"** — 카메라나 표지가 밀렸다. 표지가 그대로면 6절 ②~③을 다시. 로봇 위치를 바꿨으면 ④.
+- **핀치가 안 잡힘** — 커서 옆 문구를 본다: "수정 모드가 아니에요"(E 또는 말), "정합 미검증"(표지), "깊이를 못 읽었어요"(손을 카메라에서 0.6 m 넘게), "깊이와 영상 시각이 안 맞아요"(시험 E).
+- **쿠옹이: `시뮬레이터가 연결을 받지 않았습니다 (another voice client …)`** — 다른 쿠옹이·텍스트 클라이언트를 끈다.
+- **쿠옹이: `PortAudio library not found`** — 2절 `libportaudio2`.
+- **ROS 패키지와 충돌(numpy 오류 등)** — 반드시 `source mujoco_sim/scripts/env.sh` / `source voice/env.sh`로 켠다.
+- **MuJoCo 창 / 그래픽** — Wayland에서는 창 자동 배치가 안 된다(손으로 옮김). 3D 창이 안 뜨면 `MUJOCO_GL=egl` 상태에서 `__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia python -m pinch_sim.app ...`.
+- **음수 인수** — `--robot-pose=-0.15,0,0`처럼 `=`로 붙인다.
+
+## 11. git에 올리지 않는 것
+
+키(`~/.config/pinch_khu/env`, 저장소 밖), 이 컴퓨터·이 카메라 값(`pac_vision/config/{local,pose,cam2base,markers,markers.check,robot_pose}.yaml`, `data/sessions/`), 실행 기록(`mujoco_sim/logs/`, `voice/logs/` — 대화 내용 포함), 저장 경로(`mujoco_sim/saved_paths/`), 가상환경, `vendor/`(저장소 밖). 커밋 전 `git status`로 확인한다.
+
+## 12. 계획과 달라진 점 (코드 기준으로 바로잡음)
+
+- 카메라 이동 감지: 계획의 "책상면 z 중앙값 15 mm"는 수평 이동·회전을 놓칠 수 있어, 보정에 쓰지 않은 **ArUco 고정 표지**의 이미지 오차·책상면 오차로 바꿨다(합성 시험: 0.5° 회전, 2 cm 밀림부터 감지).
+- `edit_mode` 직접 대입 9곳: 모두 상태 이벤트와 함께 일어나 revision·통지가 이미 되므로 바꾸지 않았다. 대신 손 입력만 `edit_mode`로 막고, 수정 모드를 켜면 자동 이동 예약을 취소한다.
+- 자동 이동 예약은 이미 검증 토큰·경로 지문에 묶여 있었고 편집·X·새 경로·연결 끊김·실패에 취소됐다. 그대로 쓰고, 수정 모드 켜기를 취소 조건에 더했다. 로봇 상태는 실행 직전 `cmd_approve`가 다시 확인한다.
+- 깊이 동기화: 최신 깊이 한 장 대신 최근 8장 중 **RGB 촬영 시각에 가장 가까운 장**을 쓴다(MediaPipe 지연 때문에 최신 장은 늘 30~60 ms 어긋남).
+- 구형 ROS 음성과의 충돌: 클라이언트 hello가 프로토콜에 없어, 두 번째 음성 연결을 거부하는 방식으로 바꿨다.
+- 비전 목표: YOLO(ultralytics) 대신 보정된 책상면 위로 솟은 깊이 점을 묶어 pac_vision `top_center`로 윗면 중심을 구한다(카메라를 다시 열지 않음).
+
+## 13. 확인 범위 (2026-10-23, 연구실 노트북)
+
+**확인함 (이 노트북, 카메라·마이크 없이):**
+- 자동 테스트: mujoco_sim 148, pac_vision 103, path 편집 110, voice 13 통과.
+- GUI(카메라 없음): 마우스 끌기 → S → V(12/12) → Y → 이동 완료; 쿠옹이 함수(`voice.sim_dryrun`)로 수정 모드 켜기 → 끌기 → 이전으로 → 끌기 → 수정 완료 → 검증 통과 → 묻지 않고 이동 → 도착 질문; 검증 실패 시 빨간 경로·실패 지점·"검증 실패 - 수정하세요".
+- 녹화된 Astra 영상(팀 샘플 세션)에 합성 표지를 넣은 영상으로: 확인됨(0.4 px / 0.7 mm) / 20 px 밀린 영상은 "카메라가 움직였어요"(20.2 px / 39 mm); 쓸 수 없는 보정 파일·옵션 조합 거부.
+- OpenNI2가 Orbbec redist로 초기화됨(장치 없음 보고), MediaPipe Hands 동작(빈 영상 약 18 ms/프레임).
+
+**미확인 (장치·키가 없어서):** 실제 Astra 인식·정합·보정·표지 오차(시험 A~C), 실제 손 핀치 3 cm 오차·깊이 끊김(D·F), RGB↔depth 시간차 분포(E), ChatKHU 실제 대화·마이크·스피커·음성 정지와 에코(G), 카메라 물체 목표 오차(H). 합성 데이터로 확인한 것을 실제 장치 결과로 쓰지 않았다.
+
+이전 노트북 기록(oryise12, 2026-10-18, `chatkhu/voice-mujoco-path-edit`): 실제 Astra Pro 보정 통과(원점 0.36 cm, 변 0.25 cm 이하), 실제 ChatKHU 음성 수정·되돌리기, 핀치 3D 수정 반영. 이 노트북에서 다시 확인한 것은 아니다.

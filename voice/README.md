@@ -1,43 +1,62 @@
-# voice — 음성으로 로봇 경로 수정 명령 받기 (ChatKHU)
+# voice — 쿠옹이: 말로 로봇 경로 고치기 (ChatKHU)
 
-한국어로 말하면 ChatKHU(Gemini Live)가 알아듣고 경로 수정 함수를 부른다. 지금은 경로를 실제로 고치지 않는다. 함수 이름과 인자를 화면에 찍고 가짜 결과를 돌려주면, AI가 그 결과를 한 문장으로 말한다.
+한국어로 말하면 ChatKHU(Gemini Live)의 쿠옹이가 알아듣고 함수를 부르고, `--sim`이면 그 함수가 MuJoCo 시뮬레이터(`mujoco_sim`, `--voice-gateway`)를 실제로 바꾼다. 시뮬레이터가 돌려준 결과와 알림(검증 결과, 이동 시작, 도착 질문)을 쿠옹이가 말한다. 설치·실행 전체 순서는 [../docs/PINCH_KHU_SETUP.md](../docs/PINCH_KHU_SETUP.md).
 
 ## 준비
 
 ```bash
-pip install -r voice/requirements.txt   # websockets, pyyaml, numpy, sounddevice, soxr
-export BAZE_API_KEY=...                 # 키는 환경변수에서만 읽는다
+cd ~/pinch_khu_ws/26_project_manipulator
+python3 -m venv .venv-voice && .venv-voice/bin/pip install -r voice/requirements.txt pytest
+mkdir -p ~/.config/pinch_khu && install -m 600 /dev/null ~/.config/pinch_khu/env   # 한 줄: BAZE_API_KEY=...
+source voice/env.sh      # ROS PYTHONPATH 제거, .venv-voice 켜기, 키 파일 읽기 (키는 출력하지 않음)
 ```
 
-이 PC에서는 `~/venv_khuai`에 다 설치되어 있다 (`source ~/venv_khuai/bin/activate`).
+마이크·스피커에는 시스템 `libportaudio2`가 필요하다.
 
-## 실행 (`code/` 폴더에서)
+## 실행
 
 ```bash
-python3 -m voice --text           # 키보드로 입력. /fail 로 실패 모드 켜고 끄기, q 로 끝
-python3 -m voice                  # 마이크. "쿠옹아"라고 부른 뒤 말한다. Ctrl+C로 끝
-python3 -m voice --fail           # 처음부터 실패 모드 ({"status":"failed","reason":"unreachable"})
-python3 -m voice --list-mics      # 마이크 목록 → --mic 번호
-python3 -m voice --prompt voice/prompts/system_v2.md   # 지시문 바꿔 비교
+python -m voice --sim             # 시뮬레이터에 연결, 마이크. "쿠옹아"라고 부른 뒤 말한다. Ctrl+C로 끝
+python -m voice --sim --text      # 키보드로 문장 입력
+python -m voice.sim_dryrun        # AI·키 없이 함수를 직접 불러 시뮬레이터 흐름 시험
+python -m voice --list-mics       # 마이크 목록 → --mic 번호
+python -m voice --text            # 시뮬레이터 없이 가짜 처리기 (지시문 system_v1)
+python -m pytest -q voice/tests   # 호출어·질문 창, 알림 문장 시험
 ```
 
-- 호출어를 들으면 마지막 대화 뒤 30초 동안은 호출어 없이 말해도 된다. 호출어 없이 온 함수 호출은 `blocked`로 막는다.
-- 설정은 `voice/config.yaml`에서 바꾼다: 호출어, 모델, 목소리, 말투, 조금·보통·많이의 cm 값(2·5·8), 실패 모드.
-- 대화 기록은 `voice/logs/*.jsonl`에 남는다 (사용자 말, 함수와 인자, 돌려준 결과, AI 말, 지시문 버전).
+`--sim`이면 지시문은 `prompts/system_v6.md`다.
+
+## 규칙
+
+- **호출어 창:** "쿠옹아"(표기 변형·비슷한 소리 포함, 문장 맨 앞)를 들으면 30초(`wake_seconds`) 동안 호출어 없이 말해도 된다. 이 시간은 명령이 실제로 실행되거나 손으로 경로를 고칠 때만 다시 채운다. "야" 한 마디로 부르기(`call_words`)는 기본으로 껐다.
+- **질문 창:** 앱(시뮬레이터)이 묻는 질문 — "계속 갈까요, 돌아갈까요?", 도착 후 "돌아오는 길을 수정할까요, …?", "새 목표로 다시 해 볼까요?" — 의 답 **한 번**은 호출어 없이 받는다. 그 질문의 답이 될 함수만, 20초(`answer_seconds`) 안에, 시뮬레이터 상태(rev)가 그대로일 때만 실행한다. 부정·엉뚱한 말로 다른 함수가 불리면 `blocked/not_an_answer`.
+- **멈춤**("멈춰", "정지", "스톱")은 언제나: 말이 들리자마자 AI 응답 전에 멈추고(빠른 정지), 시뮬레이터도 늦게 도착한 정지 요청을 거절하지 않는다. 다만 기본 설정에서는 쿠옹이가 말하는 동안 마이크가 무음이라(`mute_mic_while_speaking`) 그동안의 "멈춰"는 들리지 않는다 → **X 키**가 확실한 정지 수단이다. 움직이는 동안 마이크를 여는 `listen_while_moving`은 실제 마이크·스피커로 에코 시험(재현 문서 8절 시험 G)을 통과한 뒤에만 켠다.
+- 설정은 `config.yaml`: 호출어와 표기 변형, 모델, 목소리, 말투, 조금·보통·많이 cm(2·5·8), 위 시간들.
+- 대화 기록은 `voice/logs/*.jsonl`(git 제외, 사용자 말이 들어 있음).
+
+## 함수 (`tools.py`, 14개)
+
+| 함수 | 시뮬레이터에서 하는 일 |
+|---|---|
+| `start_edit` | 수정 모드를 실제로 켠다(검증 중이면 취소, 도착 뒤면 돌아오는 길 수정). 켜진 결과가 와야 안내 문장(`say`)을 준다 |
+| `move_here`, `move_region`, `adjust_amount` | 가리킨 점 / 시작·가운데·끝을 방향·거리만큼 옮김, "조금만 더 / 좀 덜" |
+| `undo_edit`, `reset_edit` | 직전 수정 되돌리기(손·마우스·말 수정 공통 기록), 처음 경로 |
+| `finish_edit` | 검증하고 통과하면 묻지 않고 그 경로로 이동(자동 이동 예약). 결정한 뒤 경로가 바뀌었으면 `path_changed` |
+| `stop_motion`, `continue_motion`, `go_back` | 멈춤, 멈춘 뒤 계속 / 돌아가기 |
+| `edit_return_path`, `new_target`, `save_paths` | 돌아오는 길 수정, 새 목표, 경로 저장 |
+| `set_target_from_camera` | 카메라가 본 책상 위 물체를 목표로 새 경로 (깊이 카메라 + 정합 확인 필요) |
 
 ## 파일
 
 | 파일 | 내용 |
 |---|---|
-| `gateway.py` | 1회용 토큰 발급 + WebSocket 연결 (User-Agent `curl/8.5.0`) |
-| `session.py` | setup·송수신·함수 처리·재연결(새 토큰 + 세션 재개 핸들) |
-| `tools.py` | 함수 선언(move_here, move_region, undo_edit, reset_edit, finish_edit)과 가짜 처리기 |
-| `prompts/system_v1.md` | AI 지시문. `{wake_word}`, `{style}`은 설정값으로 바뀐다 |
-| `audio_io.py`, `wake_word.py`, `console.py` | `manipulator_voice`에서 복사해 고침 |
+| `session.py` | ChatKHU 연결·송수신·함수 실행 판정·알림 전달·재연결 |
+| `wake_word.py` | 호출어 감지, 호출어 창·질문 창, `gate_decision`(실행할지) |
+| `sim_link.py` | 시뮬레이터 소켓 연결(한 번에 한 클라이언트), 함수 → 명령, 알림 문장 |
+| `sim_dryrun.py` | AI 없이 함수 호출 시험 |
+| `tools.py` | 함수 선언, 가짜 처리기(시뮬레이터 없이) |
+| `prompts/system_v6.md` | 시뮬레이터용 지시문 (v1~v5는 이전 기록) |
+| `gateway.py` | 1회용 토큰 + WebSocket 연결 |
+| `audio_io.py`, `console.py`, `turn_log.py` | 마이크·스피커, 출력(키 가림), 대화 기록 |
 
-## 게이트웨이 시험 결과 (2026-10-08)
-
-- 마이크 음성(realtimeInput audio, 16 kHz PCM): 통과
-- 입력 음성 자막(inputAudioTranscription, languageCodes 포함): 통과. 다만 "자비스"가 "재비스", "서비스", "다비스", "나비드" 등으로 적힌다. 첫 단어가 첫 글자만 다르면 호출어로 보도록 했지만(`wake_fuzzy`) 아직 놓칠 때가 있다.
-- 세션 재개(sessionResumption): 통과. 끊긴 뒤 새 토큰 + 핸들로 붙으면 앞 대화를 이어 간다.
-- speechConfig(목소리), contextWindowCompression: setup에서 받아들여짐.
+예전 ROS 음성 모듈(`work/integration-all`의 `manipulator_voice`, Gemini Live 직접 연결)과는 다른 프로그램이다. 같은 호출어·같은 시뮬레이터 소켓을 쓰므로 함께 켜지 않는다(쿠옹이는 그 프로세스가 보이면 시작하지 않고, 시뮬레이터는 두 번째 음성 연결을 거부한다).

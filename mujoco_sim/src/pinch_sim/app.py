@@ -9,6 +9,7 @@ Commands come from the side_cam (OpenCV) window: click its button bar, or press 
 that window has keyboard focus:
   N new seeded target   S select shown path   V request validation   Y approve & execute
   H return path to ready   X cancel/stop (also cancels a drag)   U undo  R redo  O original path   Q quit
+  E edit mode on/off (the hand edits only in edit mode)   G target = the object the depth camera sees (--depth)
 Path editing (side_cam image area): left-press near a path point picks it, dragging changes only its
 height: x, y stay fixed and z is the point of the vertical line through it that is closest to the
 mouse ray (real side_cam pose/fovy), release keeps the edit,
@@ -28,9 +29,12 @@ the sim time and frame number are printed in both.
                                                             for unattended GUI smoke tests)
   --script "2:DRAG:0.4:30:-20"  scripted mouse drag through the same mouse handler: press on the path
                                 point at 40 % of its samples, move by (+30, -20) display pixels, release
-  --voice-gateway [SOCKET]      accept the voice process (쿠옹이, manipulator_voice.kuong_sim) on a local
-                                socket; its commands run in this main loop through the same Session
+  --voice-gateway [SOCKET]      accept the voice process (쿠옹이: python -m voice --sim, one client at a time) on a
+                                local socket; its commands run in this main loop through the same Session
                                 methods as the buttons (default socket $XDG_RUNTIME_DIR/pinch_sim/voice.sock)
+  --calib CAM2BASE --video auto --hand --depth    real Astra: the calibration must pass, match the current
+                                pac_vision settings and the camera's USB identity; fixed markers (markers.yaml)
+                                are checked on the live image before the overlay / 3-D pinch count as calibrated
 """
 from __future__ import annotations
 

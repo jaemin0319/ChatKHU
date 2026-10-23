@@ -2,6 +2,8 @@
 
 카메라 실물마다 미리 맞춘 정합 계수다. 형식은 `config/pose.yaml`과 같고(`camera.rgb_to_depth`만), 그대로 복사해 쓴다.
 
+> ⚠️ 2026-10-23: 기본값으로 복사하지 않는다. 어느 카메라가 실물 1인지 구분할 표시가 아직 없고(아래 "카메라" 행), 실물 1에서도 맞춤에 쓰지 않은 설치 자세에서는 A4 변 오차가 약 1 cm였다(아래 "확인된 범위"). 시연에는 그 카메라·그 자세에서 정합 쌍을 재서 `pose.yaml`을 만든다(`docs/PINCH_KHU_SETUP.md` 6절 ①). 아래 `~/pac_ws/...` 경로는 예전 작업공간이다. 지금은 `~/pinch_khu_ws/26_project_manipulator/pac_vision`.
+
 ```bash
 cd ~/pac_ws/src/26_project_manipulator/pac_vision
 cp config/pose_presets/astra_unit1.yaml config/pose.yaml

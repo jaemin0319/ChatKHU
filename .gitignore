@@ -10,5 +10,12 @@ mujoco_sim/logs/
 mujoco_sim/saved_paths/
 mujoco_sim/.cache/
 mujoco_sim/.tmp/
-# 비밀 설정
+# 비밀 설정 (키는 저장소 밖 ~/.config/pinch_khu/env에 둔다)
 .env
+.env.*
+!.env.example
+*.key
+# 녹음·로그 (사용자 목소리·대화가 들어 있을 수 있다)
+*.wav
+*.log
+MUJOCO_LOG.TXT
