@@ -96,6 +96,18 @@ nano ~/.config/pinch_khu/env          # 한 줄: BAZE_API_KEY=발급받은_키
 
 `source voice/env.sh`가 이 파일을 읽는다(권한이 600이 아니면 경고). 키가 없으면 쿠옹이는 `환경변수 BAZE_API_KEY가 비어 있습니다`로 멈추고 키 값은 출력하지 않는다.
 
+마이크 입력 크기를 확인한다 (키 없이, 소리는 저장하지 않음):
+
+```bash
+source voice/env.sh
+python -m voice --list-mics          # 마이크 목록
+python -m voice.mic_check            # 배경 잡음·DC·잘림. 잘림이 0 %가 아니면 아래 amixer
+python -m voice.mic_check --echo     # 스피커 → 마이크 에코 (1초 삐 소리)
+amixer -c 1 sset 'Internal Mic Boost' 0     # 노트북 내장 마이크 증폭 낮추기 (카드 번호: arecord -l)
+```
+
+2026-10-23 이 노트북(ALC257 내장 마이크)은 처음에 Internal Mic Boost +30 dB와 Capture +30 dB가 모두 최대라 입력의 28 %가 잘리고 DC가 +0.31이었다(음성 인식이 될 수 없는 상태). `Internal Mic Boost 0`으로 낮춘 뒤 배경 −37 ~ −45 dBFS, 잘림 0 %. 이 설정은 사용자 권한의 ALSA 믹서 값이라 재부팅·오디오 설정 앱에서 다시 바뀔 수 있으니 시연 전에 `mic_check`로 다시 본다.
+
 ## 5. 카메라 확인
 
 ```bash
@@ -239,6 +251,8 @@ python -m voice --list-mics       # 마이크 목록, --mic 번호로 고름
 2. `voice/config.yaml`에서 `listen_while_moving: true`로 바꾸고 스피커 볼륨 3단계에서: (a) 아무 말 없이 이동 5회 → 쿠옹이 자기 말이 끊기거나 명령으로 들어간 횟수, (b) 쿠옹이가 말하는 중 "멈춰" 5회 → 멈춘 횟수.
 3. (a)가 0이고 (b)가 모두 성공한 설정(볼륨, 이어폰 여부)일 때만 `listen_while_moving: true`를 쓴다. 아니면 false로 두고 X 키를 안내한다. 결과를 이 문서에 적는다.
 
+예비 측정 (2026-10-23 이 노트북, 내장 스피커·내장 마이크, 시스템 출력 볼륨 48 %, AI 없이 `voice.mic_check --echo`): 쿠옹이 목소리 크기(0.3)의 1 kHz 음이 마이크에 **−17.8 dBFS**로 들어온다(배경 −44 dBFS). 사람이 말하는 크기와 비슷해서, 내장 스피커로 `listen_while_moving`을 켜면 쿠옹이가 자기 말을 들을 가능성이 크다 → **이 노트북 내장 스피커로는 false 유지**, 켜려면 이어폰으로 위 1~3을 해 본다. ChatKHU로 한 실제 시험(1~3)은 API 키가 없어 아직 못 했다.
+
 ## 9. 장치·키가 없을 때의 대체 시연
 
 | 없는 것 | 대체 |
@@ -267,6 +281,7 @@ python -m voice.sim_dryrun        # 한 줄에 하나: start_edit / move_region 
 - **핀치가 안 잡힘** — 커서 옆 문구를 본다: "수정 모드가 아니에요"(E 또는 말), "정합 미검증"(표지), "깊이를 못 읽었어요"(손을 카메라에서 0.6 m 넘게), "깊이와 영상 시각이 안 맞아요"(시험 E).
 - **쿠옹이: `시뮬레이터가 연결을 받지 않았습니다 (another voice client …)`** — 다른 쿠옹이·텍스트 클라이언트를 끈다.
 - **쿠옹이: `PortAudio library not found`** — 2절 `libportaudio2`.
+- **"쿠옹아"를 못 알아듣거나 말이 엉뚱하게 적힘** — `python -m voice.mic_check`로 잘림을 본다. 잘림이 있으면 `amixer -c 1 sset 'Internal Mic Boost' 0`(4절). 그다음 터미널 2의 `[사용자]` 줄을 보고 자주 틀리는 표기는 `voice/config.yaml`의 `wake_aliases`에 더한다.
 - **ROS 패키지와 충돌(numpy 오류 등)** — 반드시 `source mujoco_sim/scripts/env.sh` / `source voice/env.sh`로 켠다.
 - **MuJoCo 창 / 그래픽** — Wayland에서는 창 자동 배치가 안 된다(손으로 옮김). 3D 창이 안 뜨면 `MUJOCO_GL=egl` 상태에서 `__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia python -m pinch_sim.app ...`.
 - **음수 인수** — `--robot-pose=-0.15,0,0`처럼 `=`로 붙인다.
@@ -291,7 +306,8 @@ python -m voice.sim_dryrun        # 한 줄에 하나: start_edit / move_region 
 - GUI(카메라 없음): 마우스 끌기 → S → V(12/12) → Y → 이동 완료; 쿠옹이 함수(`voice.sim_dryrun`)로 수정 모드 켜기 → 끌기 → 이전으로 → 끌기 → 수정 완료 → 검증 통과 → 묻지 않고 이동 → 도착 질문; 검증 실패 시 빨간 경로·실패 지점·"검증 실패 - 수정하세요".
 - 녹화된 Astra 영상(팀 샘플 세션)에 합성 표지를 넣은 영상으로: 확인됨(0.4 px / 0.7 mm) / 20 px 밀린 영상은 "카메라가 움직였어요"(20.2 px / 39 mm); 쓸 수 없는 보정 파일·옵션 조합 거부.
 - OpenNI2가 Orbbec redist로 초기화됨(장치 없음 보고), MediaPipe Hands 동작(빈 영상 약 18 ms/프레임).
+- 2절 패키지 설치됨(libportaudio2 포함). 쿠옹이가 마이크를 인식하고(`--list-mics`), 내장 마이크 증폭을 낮춘 뒤 잘림 0 %. 스피커 → 마이크 에코 예비 측정 −17.8 dBFS(8절 시험 G 아래).
 
-**미확인 (장치·키가 없어서):** 실제 Astra 인식·정합·보정·표지 오차(시험 A~C), 실제 손 핀치 3 cm 오차·깊이 끊김(D·F), RGB↔depth 시간차 분포(E), ChatKHU 실제 대화·마이크·스피커·음성 정지와 에코(G), 카메라 물체 목표 오차(H). 합성 데이터로 확인한 것을 실제 장치 결과로 쓰지 않았다.
+**미확인 (장치·키가 없어서):** 실제 Astra 인식·정합·보정·표지 오차(시험 A~C), 실제 손 핀치 3 cm 오차·깊이 끊김(D·F), RGB↔depth 시간차 분포(E), ChatKHU 실제 대화와 음성 정지·에코(G의 1~3), 카메라 물체 목표 오차(H). udev 규칙(3절)은 아직 넣지 않았다(관리자 비밀번호 필요, 카메라를 꽂기 전에 넣으면 된다). 합성 데이터로 확인한 것을 실제 장치 결과로 쓰지 않았다.
 
 이전 노트북 기록(oryise12, 2026-10-18, `chatkhu/voice-mujoco-path-edit`): 실제 Astra Pro 보정 통과(원점 0.36 cm, 변 0.25 cm 이하), 실제 ChatKHU 음성 수정·되돌리기, 핀치 3D 수정 반영. 이 노트북에서 다시 확인한 것은 아니다.
