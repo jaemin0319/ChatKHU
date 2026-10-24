@@ -22,7 +22,7 @@
       ]
     ],
     "_tcp_note": "With gripper.enabled the TCP is the gripper tip centre (derived in build_scene from gripper.*); tcp_local_pos_m/tool_length_m below are the old flange-face TCP and are used only when the gripper is disabled.",
-    "_source_note": "The tracked 6dof_description package (from branch urdf@b2b4038) is used unchanged; additions are generated/added files only."
+    "_source_note": "The tracked 6dof_description package (from branch urdf@b2b4038) is used with one change: 2026-10-24 (user request) every joint origin moved 2 mm along its axis toward the child, so adjacent parts have a 2 mm face gap (meshes unchanged; urdf, xacro, 6dof_mj.urdf, 6dof.xml, 6dof_control.xml). Other additions are generated/added files only."
   },
   "desk": {
     "enabled": true,
@@ -42,8 +42,8 @@
   },
   "ready": {
     "tcp_m": [
-      0.092294,
-      0.098206,
+      0.094294,
+      0.100206,
       0.25
     ],
     "tool_axis": [
@@ -201,7 +201,7 @@
     "target.r_max_m": "0.30 -> 0.40 (2026-10-11 user request): 273/273 grid points (r 0.20-0.40 / 0.01, theta +-30 / 5 deg) pass all 12 checks; duration 3.2-6.3 s, tau max 2.67 N*m, sigma_min 0.089",
     "target.r_min_m": "0.20 -> 0.35 (2026-10-11 user request): band 0.35-0.40 m -> 0.25 (2026-10-12 user request): band 0.25-0.30 m",
     "target.r_max_m_2026-10-12": "0.40 -> 0.30 (2026-10-12 user request, with r_min 0.25); logs/workspace_scan_r025_030.json: 78/78 grid points (r 0.25-0.30 / 0.01, theta +-30 / 5 deg) pass all 12 checks, duration 6.5-9.7 s",
-    "ready.tcp_m": "[0,0.20,0.22] -> [0,0.10,0.30] -> [0.0905,0.10,0.30] with Revolute_1 locked at 0 (2026-10-11 user request: J2 axis (1,0,0) at home; x=0 is not reachable with J1=0 and tool down) -> FK of the previous home joints after the 90 deg gripper roll (2026-10-11) -> roll -90 and z lowered by 0.05 m (2026-10-11)",
+    "ready.tcp_m": "[0,0.20,0.22] -> [0,0.10,0.30] -> [0.0905,0.10,0.30] with Revolute_1 locked at 0 (2026-10-11 user request: J2 axis (1,0,0) at home; x=0 is not reachable with J1=0 and tool down) -> FK of the previous home joints after the 90 deg gripper roll (2026-10-11) -> roll -90 and z lowered by 0.05 m (2026-10-11) -> same joints, FK after the 2 mm joint gaps: +2 mm x, +2 mm y (2026-10-24)",
     "ik.damping_off_below": "added 2026-10-11 with the gripper: DLS damping 1e-3 is switched to 1e-10 once the task error < 1e-3; with the tip 1.8 mm off the J6 axis the ready IK (J1 locked) otherwise stalled at 0.3 mm"
   },
   "editor": {

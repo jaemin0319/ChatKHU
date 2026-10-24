@@ -40,32 +40,32 @@
     <camera name="side_cam" quat="0.346191 0.242405 0.519836 0.742403" pos="0.3 0.5 0.3" fovy="60"/>
     <camera name="side_cam_alt" quat="0.586183 0.383797 0.390839 0.596937" pos="0.55 0.25 0.3" fovy="60"/>
     <light pos="0 0 1.5" type="directional"/>
-    <body name="r_a_1" pos="0 0.002984 0.041554">
+    <body name="r_a_1" pos="0 0.002984 0.043554">
       <inertial pos="0.0104256 0.000992663 0.0386486" quat="0.93748 -0.0205562 0.347421 0.00276457" mass="0.176938" diaginertia="0.000246766 0.000235056 0.000200178"/>
       <joint name="Revolute_1" range="-3.14159 3.14159" actuatorfrcrange="-10 10"/>
       <geom pos="0 -0.002984 -0.041554" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.7 0.7 0.7 1" density="0" mesh="r_a_1"/>
       <geom pos="0 -0.002984 -0.041554" quat="1 0 0 0" type="mesh" rgba="0.7 0.7 0.7 1" mesh="r_a_1"/>
-      <body name="link_1" pos="0.04 0 0.0505">
+      <body name="link_1" pos="0.042 0 0.0505">
         <inertial pos="0.0362299 1.34955e-05 0.100939" quat="0.707082 -0.00594976 -0.00594976 0.707082" mass="0.4238" diaginertia="0.003244 0.00322976 0.000555243"/>
         <joint name="Revolute_2" range="-3.14159 3.14159" actuatorfrcrange="-10 10" axis="1 0 0"/>
         <geom pos="-0.04 -0.002984 -0.092054" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.7 0.7 0.7 1" density="0" mesh="link_1"/>
         <geom pos="-0.04 -0.002984 -0.092054" quat="1 0 0 0" type="mesh" rgba="0.7 0.7 0.7 1" mesh="link_1"/>
-        <body name="link__1__1" pos="0 0 0.2">
+        <body name="link__1__1" pos="-0.002 0 0.2">
           <inertial pos="-0.0362299 -1.32746e-05 0.100939" quat="0.707082 0.00594976 0.00594976 0.707082" mass="0.4238" diaginertia="0.003244 0.00322976 0.000555243"/>
           <joint name="Revolute_3" range="-3.14159 3.14159" actuatorfrcrange="-10 10" axis="-1 0 0"/>
           <geom pos="-0.04 -0.002984 -0.292054" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.7 0.7 0.7 1" density="0" mesh="link__1__1"/>
           <geom pos="-0.04 -0.002984 -0.292054" quat="1 0 0 0" type="mesh" rgba="0.7 0.7 0.7 1" mesh="link__1__1"/>
-          <body name="r_a__1__1" pos="0 0 0.2">
+          <body name="r_a__1__1" pos="0.002 0 0.2">
             <inertial pos="0.0386489 -0.000992442 0.0104253" quat="0.0125806 0.417234 -0.0164903 0.908562" mass="0.176938" diaginertia="0.000246766 0.000235056 0.000200178"/>
             <joint name="Revolute_4" range="-3.14159 3.14159" actuatorfrcrange="-10 10" axis="1 0 0"/>
             <geom pos="-0.04 -0.002984 -0.492054" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.7 0.7 0.7 1" density="0" mesh="r_a__1__1"/>
             <geom pos="-0.04 -0.002984 -0.492054" quat="1 0 0 0" type="mesh" rgba="0.7 0.7 0.7 1" mesh="r_a__1__1"/>
-            <body name="r_a__2__1" pos="0.0505 0 0.04">
+            <body name="r_a__2__1" pos="0.0505 0 0.042">
               <inertial pos="-0.0104256 -0.000992442 0.0386486" quat="0.93748 0.0205562 -0.347421 0.00276457" mass="0.176938" diaginertia="0.000246766 0.000235056 0.000200178"/>
               <joint name="Revolute_5" range="-3.14159 3.14159" actuatorfrcrange="-10 10"/>
               <geom pos="-0.0905 -0.002984 -0.532054" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.7 0.7 0.7 1" density="0" mesh="r_a__2__1"/>
               <geom pos="-0.0905 -0.002984 -0.532054" quat="1 0 0 0" type="mesh" rgba="0.7 0.7 0.7 1" mesh="r_a__2__1"/>
-              <body name="housing_1" pos="-0.04 0 0.0505">
+              <body name="housing_1" pos="-0.042 0 0.0505">
                 <joint name="Revolute_6" range="-3.14159 3.14159" actuatorfrcrange="-10 10" axis="-1 0 0"/>
                 <geom name="gripper_visual" pos="0.063911 0.24259 0.114841" quat="0.5 -0.5 -0.5 0.5" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.7 0.7 0.7 1" density="0" mesh="gripper"/>
                 <geom name="gripper_collision" pos="0.063911 0.24259 0.114841" quat="0.5 -0.5 -0.5 0.5" type="mesh" rgba="0.7 0.7 0.7 1" mass="0.22" mesh="gripper"/>

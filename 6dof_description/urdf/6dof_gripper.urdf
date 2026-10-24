@@ -154,7 +154,7 @@
 </link>
 
 <joint name="Revolute_1" type="revolute">
-  <origin xyz="0.0 0.002984 0.041554" rpy="0 0 0"/>
+  <origin xyz="0.0 0.002984 0.043554" rpy="0 0 0"/>
   <parent link="base_link"/>
   <child link="r_a_1"/>
   <axis xyz="0.0 0.0 1.0"/>
@@ -162,7 +162,7 @@
 </joint>
 
 <joint name="Revolute_2" type="revolute">
-  <origin xyz="0.04 0.0 0.0505" rpy="0 0 0"/>
+  <origin xyz="0.042 0.0 0.0505" rpy="0 0 0"/>
   <parent link="r_a_1"/>
   <child link="link_1"/>
   <axis xyz="1.0 0.0 0.0"/>
@@ -170,7 +170,7 @@
 </joint>
 
 <joint name="Revolute_3" type="revolute">
-  <origin xyz="0.0 0.0 0.2" rpy="0 0 0"/>
+  <origin xyz="-0.002 0.0 0.2" rpy="0 0 0"/>
   <parent link="link_1"/>
   <child link="link__1__1"/>
   <axis xyz="-1.0 0.0 0.0"/>
@@ -178,7 +178,7 @@
 </joint>
 
 <joint name="Revolute_4" type="revolute">
-  <origin xyz="0.0 0.0 0.2" rpy="0 0 0"/>
+  <origin xyz="0.002 0.0 0.2" rpy="0 0 0"/>
   <parent link="link__1__1"/>
   <child link="r_a__1__1"/>
   <axis xyz="1.0 -0.0 -0.0"/>
@@ -186,7 +186,7 @@
 </joint>
 
 <joint name="Revolute_5" type="revolute">
-  <origin xyz="0.0505 0.0 0.04" rpy="0 0 0"/>
+  <origin xyz="0.0505 0.0 0.042" rpy="0 0 0"/>
   <parent link="r_a__1__1"/>
   <child link="r_a__2__1"/>
   <axis xyz="0.0 0.0 1.0"/>
@@ -194,7 +194,7 @@
 </joint>
 
 <joint name="Revolute_6" type="revolute">
-  <origin xyz="-0.04 0.0 0.0505" rpy="0 0 0"/>
+  <origin xyz="-0.042 0.0 0.0505" rpy="0 0 0"/>
   <parent link="r_a__2__1"/>
   <child link="housing_1"/>
   <axis xyz="-1.0 0.0 -0.0"/>

@@ -46,7 +46,9 @@ def independent_fk(q, tcp_local=None, tool_local=None):
 
 
 def test_original_model_copy_unchanged():
-    """The original model files used by the simulator must still equal branch urdf@b2b4038."""
+    """The model files used by the simulator must equal branch urdf@b2b4038 plus the 2026-10-24 change (every joint
+    origin 2 mm along its axis toward the child: urdf/6dof.urdf, urdf/6dof.xacro, mujoco/6dof_control.xml); meshes
+    and the scene are the originals. An unintended edit of these files fails here."""
     import json
     ref = json.loads((ROOT / "tests/original_model_sha256.json").read_text())
     for name, sha in ref.items():
