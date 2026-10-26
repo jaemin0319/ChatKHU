@@ -8,7 +8,7 @@ import yaml
 
 import synth
 
-LAYOUTS = ("a4_layout.yaml", "a4_layout_single.yaml")
+LAYOUTS = ("a4_layout.yaml", "a4_layout_single.yaml", "a4_layout_aruco.yaml")
 _current = [LAYOUTS[0]]
 
 

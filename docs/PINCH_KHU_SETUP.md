@@ -139,8 +139,14 @@ python tools/fit_rgb_to_depth.py <저장된 쌍 CSV> --write-pose     # config/p
 ### ② A4 보정
 
 ```bash
-python scripts/calibrate.py             # 배치 점검 → Enter → 원점·꼭짓점 1~4 클릭 → 검사 5가지 → 모두 ✓이면 s
+python scripts/calibrate.py --layout aruco   # ArUco 보정판(권장): 배치 점검 → Enter → 마커 4개 자동 검출 → 검사 5가지 → 모두 ✓이면 s
+python scripts/calibrate.py --layout single  # 빈 A4 한 장: 꼭짓점 1 좌상 → 2 우상 → 3 좌하 → 4 우하 클릭
+python scripts/calibrate.py                  # 팀 기본(A4 두 장): 원점·꼭짓점 1~4 클릭
 ```
+
+- 보정판 인쇄물: `python tools/make_aruco_board.py ~/aruco_board.pdf` (A4 가로, 실제 크기 100 %). 놓는 법과 근거는
+  [`pac_vision/CALIBRATION_GUIDE.md`](../pac_vision/CALIBRATION_GUIDE.md) 5-2절. 손 클릭은 2026-10-26에 3–5 px 오차로 변 검사를
+  자주 넘겼다. 보정판은 그 단계를 자동 검출로 바꾼다.
 
 - `cam2base.yaml`에 결과와 함께 **카메라 신원**(장치 이름, USB 포트 by-path)과 그때의 카메라 설정 사본이 들어간다.
 - 실패한 결과를 `s s`로 강제 저장하면(`passed: false`) 시뮬레이터가 거부한다. 리허설 때만 `--allow-unverified-calib`(겹침 미검증 배지, 3D 핀치 꺼짐).

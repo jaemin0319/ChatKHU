@@ -16,6 +16,8 @@ base_ref 좌표를 줄자로 재서 config/markers.yaml에 적어 두면(보정 
   no_config    config/markers.yaml이 없다: 검증할 수 없다
 허용오차 기본값(8 px, 10 mm)은 계획의 출발값이다. 실제 카메라에서 잰 분포로 markers.yaml에서 바꾼다.
 
+보정판(find_board): 캘리브레이션 기준점을 클릭 대신 ArUco 마커 중심으로 찾는다 (config/a4_layout_aruco.yaml).
+
 좌표: base_ref (m, +X 앞 = A4 화살표, +Y 왼쪽, +Z 위, A4 대각선 교점 원점, 책상 z = 0).
 """
 from __future__ import annotations
@@ -73,13 +75,22 @@ def square_center(corners) -> np.ndarray:
     return p + t * r
 
 
-def detect_quads(bgr, dictionary: str = "DICT_4X4_50") -> dict[int, np.ndarray]:
-    """영상 속 ArUco 표지의 네 꼭짓점 {id: (4, 2)} (화면 픽셀)."""
+def detect_all(bgr, dictionary: str = "DICT_4X4_50", subpix: bool = False) -> list[tuple[int, np.ndarray]]:
+    """영상 속 ArUco 표지 전부 [(id, (4, 2) 꼭짓점)] (화면 픽셀). 같은 번호가 여러 번 보이면 모두 담는다.
+    subpix: 꼭짓점을 서브픽셀로 다듬는다 (보정판처럼 위치를 기준으로 쓸 때)."""
     import cv2
-    det = cv2.aruco.ArucoDetector(_dictionary(dictionary), cv2.aruco.DetectorParameters())
+    params = cv2.aruco.DetectorParameters()
+    if subpix:
+        params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+    det = cv2.aruco.ArucoDetector(_dictionary(dictionary), params)
     gray = bgr if bgr.ndim == 2 else cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     corners, ids, _ = det.detectMarkers(gray)
-    return {} if ids is None else {int(i): np.asarray(c, float).reshape(4, 2) for c, i in zip(corners, ids.ravel())}
+    return [] if ids is None else [(int(i), np.asarray(c, float).reshape(4, 2)) for c, i in zip(corners, ids.ravel())]
+
+
+def detect_quads(bgr, dictionary: str = "DICT_4X4_50") -> dict[int, np.ndarray]:
+    """영상 속 ArUco 표지의 네 꼭짓점 {id: (4, 2)} (화면 픽셀)."""
+    return dict(detect_all(bgr, dictionary))
 
 
 def detect(bgr, dictionary: str = "DICT_4X4_50") -> dict[int, np.ndarray]:
@@ -91,6 +102,32 @@ def shortest_side_px(quad) -> float:
     """표지가 화면에 보이는 가장 짧은 변 (px). 비스듬히 보면 짧아진다. 약 30 px보다 작으면 검출이 불안정하다."""
     q = np.asarray(quad, float).reshape(4, 2)
     return float(np.min(np.linalg.norm(q - np.roll(q, -1, axis=0), axis=1)))
+
+
+@dataclass
+class BoardDetection:
+    """보정판(a4_layout_aruco.yaml) 마커 찾기 결과."""
+    points: np.ndarray | None           # ids 순서의 마커 중심 (N, 2) 화면 픽셀. 모두 제대로 찾았을 때만
+    quads: dict[int, np.ndarray]        # 한 번씩 찾은 보정판 마커의 꼭짓점
+    missing: list[int]                  # 안 보이는 번호
+    duplicated: list[int]               # 두 번 이상 보이는 번호 (어느 것이 보정판인지 모른다)
+    small: list[int]                    # 화면에서 min_side_px보다 작게 보이는 번호
+
+
+def find_board(bgr, ids, dictionary: str = "DICT_4X4_50", min_side_px: float = 30.0) -> BoardDetection:
+    """보정판 마커(ids)의 중심을 ids 순서로 찾는다: 서브픽셀 꼭짓점의 대각선 교점.
+    하나라도 안 보이거나, 같은 번호가 둘이거나, 너무 작게 보이면 points = None (이유는 나머지 필드)."""
+    want = [int(i) for i in ids]
+    by_id: dict[int, list] = {}
+    for k, q in detect_all(bgr, dictionary, subpix=True):
+        if k in want:
+            by_id.setdefault(k, []).append(q)
+    missing = [k for k in want if k not in by_id]
+    duplicated = [k for k in want if len(by_id.get(k, ())) > 1]
+    quads = {k: v[0] for k, v in by_id.items() if len(v) == 1}
+    small = [k for k in want if k in quads and shortest_side_px(quads[k]) < min_side_px]
+    points = None if (missing or duplicated or small) else np.array([square_center(quads[k]) for k in want])
+    return BoardDetection(points, quads, missing, duplicated, small)
 
 
 @dataclass

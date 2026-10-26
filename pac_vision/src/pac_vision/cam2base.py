@@ -545,6 +545,7 @@ def solve_calibration(depth_mm, clicks_rgb, cam: CameraModel, layout: dict, thr:
     layout.base_clicked = false (원점이 종이 밖, 예: 로봇 베이스): 클릭은 꼭짓점 4점뿐이다. 홀드아웃은 꼭짓점 하나를 빼고
     나머지 3점으로 맞춘 변환이 뺀 꼭짓점을 얼마나 틀리게 놓는지(가장 큰 값)로 대신하고, 최종 변환은 4점 Kabsch.
     layout.cycle: 클릭 순서가 종이 테두리 순서가 아닐 때(예: 좌상·우상·좌하·우하) 테두리 순서 (1부터, 위에서 볼 때 반시계).
+    layout.short_side_min_px: 화면 크기 검사 기준 (없으면 thresholds의 a4_short_side_min_px).
     """
     pc, cc, oc = thr["plane"], thr["calibration"], thr["objects"]
     clicks = np.asarray(clicks_rgb, dtype=float).reshape(-1, 2)
@@ -651,11 +652,12 @@ def solve_calibration(depth_mm, clicks_rgb, cam: CameraModel, layout: dict, thr:
 
     min_h = oc["min_height_m"]
     far_p95 = desk.get("far", {}).get("p95", float("nan"))
+    min_px = float(layout.get("short_side_min_px", cc["a4_short_side_min_px"]))   # 배치가 정하면 그 값 (보정판)
     checks = [
         Check("base_error", holdout <= cc["base_error_max_m"], holdout, cc["base_error_max_m"], True),
         Check("a4_sides", bool(np.all(side_err <= sides_tol)), float(side_err[worst]), float(sides_tol[worst]), True),
         Check("reflection", bool(hand and above), float(t[2]), 0.0, True),
-        Check("a4_size", a4_short_px >= cc["a4_short_side_min_px"], a4_short_px, cc["a4_short_side_min_px"], False),
+        Check("a4_size", a4_short_px >= min_px, a4_short_px, min_px, False),
         Check("desk_z", bool(np.isfinite(far_p95) and far_p95 < min_h), far_p95, min_h, False),
     ]
     return CalibResult(

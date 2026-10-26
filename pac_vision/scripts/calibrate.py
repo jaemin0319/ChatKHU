@@ -1,6 +1,7 @@
 """캘리브레이션 (카메라 → base_ref).
 
 python scripts/calibrate.py                         장면 1: 배치 점검 → Enter 정지 → 클릭 5회 → 결과 → s 저장
+python scripts/calibrate.py --layout aruco          ArUco 보정판(마커 4개): 클릭 대신 마커 중심을 자동으로 찾는다
 python scripts/calibrate.py --check                 장면 3: 테이프 표시 클릭으로 재점검 (이어서 다른 점 클릭 시 base 좌표)
 python scripts/calibrate.py --replay 세션.npz        장면 4: 카메라 없이 같은 계산 (--no-gui, --use-current-config)
 공통: --depth-mode plane|point, --config-dir
@@ -20,6 +21,7 @@ from pac_vision.cam2base import (Cam2Base, CalibrationError, CameraModel, averag
                                  fit_desk_plane_near, patch_median, roi_points, solve_calibration)
 from pac_vision.config import has_pose
 from pac_vision.devices import rgb_identity
+from pac_vision.markers import find_board, shortest_side_px, square_center
 from pac_vision.session import (MissingCalibration, calibration_matches_current, compare_summaries, replay_session,
                                 require_cam2base,
                                 save_session, write_cam2base)
@@ -40,19 +42,26 @@ POINT_NAMES = ["원점(0번)", "꼭짓점 1번", "꼭짓점 2번", "꼭짓점 3�
 SIDE_NAMES = ["1-2", "2-3", "3-4", "4-1"]
 N_POINTS = 5            # 클릭 수 (원점을 찍지 않는 배치는 4)
 KEY0 = 0                # 결과 화면에서 이 숫자 키가 클릭 목록의 0번 (원점을 찍지 않는 배치는 1 = 꼭짓점 1)
+SHAPE = "A4"            # 기준점이 이루는 사각형 이름 (결과 화면)
+KIND = "꼭짓점"          # 기준점 이름 (결과 화면): 꼭짓점 / 마커
+ARUCO = None            # 보정판 배치의 aruco 설정 (마커 번호·사전·크기). None = 클릭 배치
+LAYOUT_FILES = {"double": "a4_layout.yaml", "single": "a4_layout_single.yaml", "aruco": "a4_layout_aruco.yaml"}
 
 
 def use_layout(layout):
     """배치(a4_layout*.yaml)에 맞춰 클릭 안내·번호 키·변 이름을 바꾼다. base_clicked: false면 꼭짓점 4개만 찍는다."""
-    global CLICK_GUIDE, POINT_LABELS, POINT_NAMES, SIDE_NAMES, N_POINTS, KEY0
+    global CLICK_GUIDE, POINT_LABELS, POINT_NAMES, SIDE_NAMES, N_POINTS, KEY0, SHAPE, KIND, ARUCO
     cyc = [int(i) for i in layout.get("cycle", (1, 2, 3, 4))]
     SIDE_NAMES = [f"{a}-{b}" for a, b in zip(cyc, cyc[1:] + cyc[:1])]
+    SHAPE = str(layout.get("shape_name", "A4"))
+    ARUCO = layout.get("aruco")
+    KIND = "마커" if ARUCO else "꼭짓점"
     if layout.get("base_clicked", True):
         return
     names = list(layout.get("click_names") or [f"꼭짓점 {i}번" for i in range(1, 5)])
     marks = "①②③④"
-    CLICK_GUIDE = [(f"{marks[i]} {names[i]}을 클릭하세요", f"{i + 1}) click corner {i + 1}", f"꼭짓점{i + 1}")
-                   for i in range(4)]
+    CLICK_GUIDE = [(f"{marks[i]} {names[i]}을 클릭하세요", f"{i + 1}) click point {i + 1}",
+                    names[i].split(" (")[0].replace(" ", "")) for i in range(4)]
     POINT_LABELS, POINT_NAMES, N_POINTS, KEY0 = ["1", "2", "3", "4"], names, 4, 1
 
 
@@ -233,6 +242,55 @@ def click_loop(screen, rgb, depth, cam, thr, rgb_size, mode, back_allowed=True):
     return clicks
 
 
+def board_problems(det, min_px):
+    """보정판 마커를 다 못 찾은 이유 [(한글, 영어)]."""
+    out = []
+    if det.missing:
+        out.append((f"안 보이는 마커: ID {', '.join(map(str, det.missing))} (가려졌거나 화면 밖, 빛 반사)",
+                    f"not found: id {det.missing}"))
+    if det.duplicated:
+        out.append((f"같은 번호가 두 개 보임: ID {', '.join(map(str, det.duplicated))} (보정판 밖의 같은 번호 마커를 치우세요)",
+                    f"seen twice: id {det.duplicated}"))
+    if det.small:
+        out.append((f"너무 작게 보임 (한 변 {min_px:.0f} px 미만): ID {', '.join(map(str, det.small))} "
+                    "(카메라를 가깝게 하거나 덜 기울이세요)", f"too small: id {det.small}"))
+    return out
+
+
+def aruco_loop(screen, rgb, depth, cam, thr, rgb_size, mode, back_allowed=True):
+    """보정판 마커 중심(ID 순서)을 정지 화면에서 찾는다. 반환 형식은 click_loop와 같다.
+    다 못 찾으면 이유를 보여 주고 b(새 정지 화면) / c(손으로 클릭) / q(종료)를 기다린다."""
+    min_px = float(ARUCO.get("min_side_px", 30))
+    det = find_board(rgb, ARUCO["ids"], ARUCO.get("dictionary", "DICT_4X4_50"), min_px)
+    if det.points is not None:
+        for name, k, p in zip(POINT_NAMES, ARUCO["ids"], det.points):
+            log(f"[검출] {name:<10} ID {k}  RGB 픽셀 ({p[0]:.1f}, {p[1]:.1f})  화면 한 변 {shortest_side_px(det.quads[k]):.0f} px")
+        return [(float(p[0]), float(p[1])) for p in det.points]
+    problems = board_problems(det, min_px)
+    for ko, _en in problems:
+        log(f"⚠ 보정판: {ko}")
+    vis = rgb.copy()
+    for k, q in det.quads.items():
+        color = YELLOW if k in det.small else GREEN
+        cv2.polylines(vis, [np.round(q).astype(np.int32)], True, color, 2, cv2.LINE_AA)
+        c = square_center(q)
+        cv2.putText(vis, str(k), (int(c[0]) - 5, int(c[1]) + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+    keys = "c: 손으로 클릭   q: 종료" + ("   b: 배치 점검으로 (새 정지 화면)" if back_allowed else "")
+    lines = [(ko, en, YELLOW) for ko, en in problems]
+    lines += [("▶ 보정판 전체가 화면에 보이는지, 손·물건이 가리거나 빛이 반사되지 않는지 확인하세요", "> check the board", WHITE),
+              (keys, "c: click by hand   q: quit" + ("   b: back to live" if back_allowed else ""), WHITE)]
+    while True:
+        screen.show(vis, lines, top=("⚠ 보정판 마커를 다 찾지 못했습니다 (초록 = 찾은 마커)", "board markers missing", YELLOW))
+        k = screen.key(30)
+        if k == ord("b") and back_allowed:
+            return "back"
+        if k == ord("c"):
+            log("[클릭] 마커 중심을 손으로 찍습니다")
+            return click_loop(screen, rgb, depth, cam, thr, rgb_size, mode, back_allowed)
+        if k == ord("q"):
+            return None
+
+
 # ---------------------------------------------------------------------------
 # 장면 1-4 결과 화면
 # ---------------------------------------------------------------------------
@@ -244,7 +302,7 @@ def result_lines(res):
     L = [("【보정 결과】 " + verdict + ("" if res.mode == "plane" else "   (depth 모드: point)"),
           "Calibration result - " + ("all checks passed" if res.passed else "some checks failed"),
           GREEN if res.passed else RED),
-         ("ⓘ ● 클릭한 점  ○ 계산 결과로 다시 그린 점 (둘이 겹치면 좋음)   축: " +
+         ("ⓘ ● " + ("찾은 마커 중심" if ARUCO else "클릭한 점") + "  ○ 계산 결과로 다시 그린 점 (둘이 겹치면 좋음)   축: " +
           ("빨강 X(앞) 초록 Y(왼쪽) 파랑 Z(위)" if N_POINTS == 5 else "빨강 X(로봇의 오른쪽) 초록 Y(로봇의 앞) 파랑 Z(위)"),
           "dot: clicked  ring: reprojected  red X(fwd) green Y(left) blue Z(up)", GRAY)]
     # 1. 원점 (원점을 찍지 않는 배치: 꼭짓점 하나를 빼고 맞춘 오차)
@@ -257,12 +315,16 @@ def result_lines(res):
                       "  > key 0: re-click the base point (paper moved: r, then b)", RED))
     else:
         worst_c = POINT_LABELS[res.holdout_index]
-        L.append((f"1. 꼭짓점 맞춤 일관성  {c_base.value * 100:.1f} cm   {mark(c_base.ok, '실패')}  "
-                  f"(기준 {c_base.limit * 100:.1f} cm 이하 · 꼭짓점 하나를 빼고 나머지 3개로 맞췄을 때 뺀 꼭짓점의 오차 중 최대, "
-                  f"꼭짓점 {worst_c})",
+        L.append((f"1. {KIND} 맞춤 일관성  {c_base.value * 100:.1f} cm   {mark(c_base.ok, '실패')}  "
+                  f"(기준 {c_base.limit * 100:.1f} cm 이하 · {KIND} 하나를 빼고 나머지 3개로 맞췄을 때 뺀 {KIND}의 오차 중 최대, "
+                  f"{KIND} {worst_c})",
                   f"corner leave-one-out {c_base.value * 100:.1f} cm (limit {c_base.limit * 100:.1f})",
                   GREEN if c_base.ok else RED))
-        if not c_base.ok:
+        if not c_base.ok and ARUCO:
+            L.append((f"   ▶ 마커 {worst_c}이(가) 다른 셋과 안 맞음 → 보정판이 평평한지, 화살표가 로봇 쪽인지 확인 "
+                      f"(r: 새 정지 화면에서 다시 찾기, {worst_c} 키: 그 마커 중심을 손으로 클릭)",
+                      f"  > marker {worst_c} off: flatten the board, r: detect again", RED))
+        elif not c_base.ok:
             L.append((f"   ▶ 꼭짓점 {worst_c}이(가) 다른 셋과 안 맞음 → {worst_c} 키: 그 꼭짓점만 모서리에 정확히 다시 클릭 "
                       "(번호 위치가 좌상·우상·좌하·우하인지 확인)",
                       f"  > key {worst_c}: re-click that corner", RED))
@@ -270,22 +332,28 @@ def result_lines(res):
     worst = int(np.argmax(np.abs(res.sides_m - res.sides_expected_m) / res.sides_tol_m))
     sides = "  ".join(f"{n}: {m * 100:.1f}" for n, m in zip(SIDE_NAMES, res.sides_m))
     exp = "/".join(f"{e * 100:.1f}" for e in res.sides_expected_m[:2])
-    L.append((f"2. A4 네 변 길이  {sides} cm   {mark(c_sides.ok, '실패')}  (실제 {exp} cm, "
+    L.append((f"2. {SHAPE} 네 변 길이  {sides} cm   {mark(c_sides.ok, '실패')}  (실제 {exp} cm, "
               f"허용 ±{min(res.sides_tol_m) * 100:.1f}~{max(res.sides_tol_m) * 100:.1f} cm)",
-              f"A4 sides cm {sides}", GREEN if c_sides.ok else RED))
-    if not c_sides.ok:
+              f"sides cm {sides}", GREEN if c_sides.ok else RED))
+    if not c_sides.ok and ARUCO:
+        d = (res.sides_m[worst] - res.sides_expected_m[worst]) * 100
+        L.append((f"   ▶ 변 {SIDE_NAMES[worst]}의 길이가 실제보다 {abs(d):.1f} cm {'길게' if d > 0 else '짧게'} 계산됨 → "
+                  f"보정판이 평평한지, 실제 크기(100 %)로 인쇄됐는지(마커 한 변 {float(ARUCO['size_m']) * 100:.1f} cm) 확인",
+                  f"  > side {SIDE_NAMES[worst]} off by {d:+.1f} cm: check the board print and flatness", RED))
+    elif not c_sides.ok:
         d = (res.sides_m[worst] - res.sides_expected_m[worst]) * 100
         L.append((f"   ▶ 변 {SIDE_NAMES[worst]}의 길이가 실제보다 {abs(d):.1f} cm {'길게' if d > 0 else '짧게'} 계산됨 → "
                   f"{SIDE_NAMES[worst].replace('-', ' 또는 ')} 키: 그 꼭짓점만 모서리에 정확히 다시 클릭",
                   f"  > side {SIDE_NAMES[worst]} off by {d:+.1f} cm: press {SIDE_NAMES[worst].replace('-', ' or ')}", RED))
-        L.append(("   ▶ 다시 눌러도 1 cm 안팎이 남으면 알려진 한계(컬러·깊이 정합 오차)입니다. s 두 번으로 저장해도 됩니다",
-                  "  > ~1 cm left after re-clicking = known limit; s twice saves", RED))
+        L.append(("   ▶ 다시 눌러도 1 cm 안팎이 남으면 알려진 한계(컬러·깊이 정합 오차)입니다. s 두 번으로 저장은 되지만 "
+                  "시뮬레이터는 통과 못 한 보정을 받지 않습니다",
+                  "  > ~1 cm left after re-clicking = known limit; s twice saves, the simulator refuses it", RED))
     # 3. 화면 크기
-    L.append((f"3. A4가 화면에 보이는 크기  가장 짧은 변 {res.a4_short_px:.0f} px   {mark(c_size.ok)}  "
+    L.append((f"3. 화면에 보이는 {SHAPE} 크기  가장 짧은 변 {res.a4_short_px:.0f} px   {mark(c_size.ok)}  "
               f"(기준 {c_size.limit:.0f} px 이상 · 1 px ≈ {res.a4_short_m_per_px * 1000:.1f} mm)",
-              f"A4 shortest side {res.a4_short_px:.0f} px", GREEN if c_size.ok else YELLOW))
+              f"shortest side {res.a4_short_px:.0f} px", GREEN if c_size.ok else YELLOW))
     if not c_size.ok:
-        L.append(("   ▶ A4가 작게 보여 클릭 1 px 실수가 크게 번집니다. 카메라를 가깝게 하거나 덜 기울이세요",
+        L.append((f"   ▶ {SHAPE}이(가) 작게 보여 1 px 오차가 크게 번집니다. 카메라를 가깝게 하거나 덜 기울이세요",
                   "  > A4 small on screen: move the camera closer", YELLOW))
     # 4. 책상면 높이
     if res.desk_z:
@@ -301,7 +369,10 @@ def result_lines(res):
     # 5. 뒤집힘
     L.append((f"5. 좌표 뒤집힘 검사   {mark(c_refl.ok, '실패')}  (좌우가 거울처럼 뒤집혀 계산되지 않았는지)",
               f"reflection check {'OK' if c_refl.ok else 'FAIL'}", GREEN if c_refl.ok else RED))
-    if not c_refl.ok:
+    if not c_refl.ok and ARUCO:
+        L.append(("   ▶ 보정판을 화살표가 로봇 쪽으로 오게 놓았는지(돌리거나 뒤집지 않았는지), depth 좌우반전 설정을 확인하세요",
+                  "  > check the board orientation or depth flip", RED))
+    elif not c_refl.ok:
         L.append(("   ▶ 꼭짓점을 1 → 2 → 3 → 4 순서(위에서 볼 때 반시계)로 눌렀는지, depth 좌우반전 설정을 확인하세요",
                   "  > check corner order or depth flip", RED))
     # 참고
@@ -309,8 +380,10 @@ def result_lines(res):
     if np.isfinite(res.plane_rms_m):
         info += f" · 책상 평면 맞춤 오차 {res.plane_rms_m * 1000:.1f} mm · 그 영역 깊이 측정 {res.roi_valid_ratio * 100:.0f} %"
     L.append((info, f"desk tilt ~{res.tilt_deg:.0f} deg (info)", GRAY))
-    keys = "0~4: 그 번호 점만 다시 클릭 (0 = 원점)" if N_POINTS == 5 else "1~4: 그 번호 꼭짓점만 다시 클릭"
-    L.append((f"▶ s: 저장    {keys}    r: 처음부터 다시    q: 저장 없이 종료",
+    keys = "0~4: 그 번호 점만 다시 클릭 (0 = 원점)" if N_POINTS == 5 else \
+        ("1~4: 그 마커 중심을 손으로 클릭" if ARUCO else "1~4: 그 번호 꼭짓점만 다시 클릭")
+    again = "r: 새 정지 화면에서 다시 찾기" if ARUCO else "r: 처음부터 다시"
+    L.append((f"▶ s: 저장    {keys}    {again}    q: 저장 없이 종료",
               f"s: save   {KEY0}-{KEY0 + N_POINTS - 1}: re-click that point   r: restart   q: quit", WHITE))
     return L
 
@@ -383,13 +456,23 @@ def save_all(cfg_dir, res, rgb, depth, rgb_size, configs, layout):
     log(f"[저장] {rel}  (RGB, depth, 클릭 {N_POINTS}점)")
     rc = int(layout["recheck_corner"])
     p = layout["corners"][rc - 1]
-    log(f"[안내] 재점검용 표시: 꼭짓점 {rc}번 자리에 테이프를 붙이세요. base 좌표 ({p[0]:.3f}, {p[1]:.3f}, {p[2]:.3f}) m")
-    log("[안내] 이제 로봇(앞면을 X 화살표에 맞춤)과 물체를 올려도 됩니다. 카메라는 움직이지 마세요.")
+    if layout.get("base_clicked", True):
+        log(f"[안내] 재점검용 표시: 꼭짓점 {rc}번 자리에 테이프를 붙이세요. base 좌표 ({p[0]:.3f}, {p[1]:.3f}, {p[2]:.3f}) m")
+        log("[안내] 이제 로봇(앞면을 X 화살표에 맞춤)과 물체를 올려도 됩니다. 카메라는 움직이지 마세요.")
+    else:
+        log(f"[안내] 재점검(--check) 때 클릭할 점: {POINT_NAMES[rc - 1]} 자리, base 좌표 ({p[0]:.3f}, {p[1]:.3f}, {p[2]:.3f}) m. "
+            "종이를 치울 거면 그 자리에 테이프를 붙이세요")
+        log("[안내] 로봇 베이스는 배치의 원점에 그대로 두고, 카메라는 움직이지 마세요.")
 
 
 # 기준점 찾기 방식: 정지 화면 → 배치 순서(base, 꼭짓점 1-4)의 화면 픽셀 배열 / None(종료) / "back".
-# 지금은 클릭만. 다른 방식은 같은 반환 형식의 함수를 여기에 더한다 (solve_calibration의 입력·출력은 그대로).
-POINT_FINDERS = {"click": click_loop}
+# 다른 방식은 같은 반환 형식의 함수를 여기에 더한다 (solve_calibration의 입력·출력은 그대로).
+POINT_FINDERS = {"click": click_loop, "aruco": aruco_loop}
+
+
+def default_points(layout) -> str:
+    """배치에 aruco 설정이 있으면 보정판 자동 찾기, 없으면 클릭."""
+    return "aruco" if layout.get("aruco") else "click"
 
 
 def find_reference_points(method, screen, rgb, depth, cam, thr, rgb_size, mode, back_allowed=True):
@@ -418,15 +501,20 @@ def calibrate_frame(screen, rgb, depth, cam, cfg, rgb_size, mode, back_allowed, 
             log(f"⚠ 계산 실패: {e}" + (f" ({names})" if names else ""))
             if len(e.indices) == 1:                     # 문제인 점이 하나면 그 점만 다시
                 redo = e.indices[0]
+            elif points == "aruco" and back_allowed:    # 같은 화면을 다시 찾으면 같은 결과: 새 정지 화면으로
+                log("  → 새 정지 화면에서 다시 찾습니다 (보정판 전체가 평평하게 보이는지 확인)")
+                return "back", None
             else:
                 log("  → 처음부터 다시 클릭하세요")
-                clicks = None
+                clicks, points = None, "click"
             continue
         act = result_loop(screen, rgb, res, cam, rgb_size, axis_len)
         if act == "save":
             return "save", res
         if act == "quit":
             return "quit", None
+        if act == "reclick" and points == "aruco" and back_allowed:
+            return "back", None                         # 보정판: 같은 화면을 다시 찾지 않고 새 정지 화면으로
         if act == "reclick":
             clicks = None
         else:                                           # ("redo", 번호): 그 점만 다시 찍고 다시 계산
@@ -451,7 +539,7 @@ def run_calibrate(args, cfg, cfg_dir, text):
                 return
             rgb, depth = frozen
             act, res = calibrate_frame(screen, rgb, depth, cam, cfg, rgb_size, args.depth_mode or "plane", True,
-                                       cfg["camera"]["ui"]["axis_len_m"], args.points)
+                                       cfg["camera"]["ui"]["axis_len_m"], args.points or default_points(cfg["a4_layout"]))
             if act == "back":
                 continue
             if act == "save":
@@ -591,6 +679,7 @@ def run_replay(args, cfg, cfg_dir, text):
             redo = act[1] if isinstance(act, tuple) else None
             act, res = calibrate_frame(screen, s["rgb"], s["depth"], cam, configs, s["rgb_size"], res.mode, False,
                                        cfg["camera"]["ui"]["axis_len_m"],
+                                       args.points or default_points(configs["a4_layout"]),
                                        clicks=[tuple(c) for c in res.clicks_rgb] if redo is not None else None, redo=redo)
         if act == "save":
             save_all(cfg_dir, res, s["rgb"], s["depth"], s["rgb_size"], configs, configs["a4_layout"])
@@ -611,23 +700,27 @@ def main():
     ap.add_argument("--no-gui", action="store_true", help="--replay와 함께: 창 없이 숫자만 출력")
     ap.add_argument("--use-current-config", action="store_true",
                     help="--replay와 함께: 세션의 설정 사본 대신 현재 설정(camera.yaml + pose.yaml)으로 계산 (정합만 다시 쟀을 때)")
-    ap.add_argument("--points", choices=sorted(POINT_FINDERS), default="click", help="기준점 찾기 방식 (지금은 click만)")
+    ap.add_argument("--points", choices=sorted(POINT_FINDERS), default=None,
+                    help="기준점 찾기 방식: click = 손 클릭, aruco = 보정판 마커 자동 (기본: 배치에 aruco 설정이 있으면 aruco)")
     ap.add_argument("--allow-default-pose", action="store_true",
                     help="시연용: config/pose.yaml(이 설치 자세의 정합 계수) 없이 camera.yaml 기본값으로 캘리브레이션")
-    ap.add_argument("--layout", choices=["double", "single"], default="double",
+    ap.add_argument("--layout", choices=sorted(LAYOUT_FILES), default="double",
                     help="기준 종이: double = A4 두 장 29.7x42.0 cm (a4_layout.yaml, 기본), "
-                         "single = A4 한 장 21.0x29.7 cm (a4_layout_single.yaml)")
+                         "single = A4 한 장 21.0x29.7 cm (a4_layout_single.yaml), "
+                         "aruco = ArUco 보정판 A4 한 장, 마커 4개 자동 (a4_layout_aruco.yaml)")
     args = ap.parse_args()
     if (args.no_gui or args.use_current_config) and not args.replay:
         ap.error("--no-gui, --use-current-config는 --replay와 함께 씁니다")
 
     cfg_dir = Path(args.config_dir).resolve()
     cfg = _ui.load_config_or_exit(cfg_dir, ("camera", "a4_layout", "thresholds"))
-    layout_file = "a4_layout.yaml"
-    if args.layout == "single" and not args.replay:      # --replay는 세션에 저장된 배치를 그대로 쓴다
+    layout_file = LAYOUT_FILES["double"]
+    if args.layout != "double" and not args.replay:      # --replay는 세션에 저장된 배치를 그대로 쓴다
         from pac_vision.config import load_yaml
-        layout_file = "a4_layout_single.yaml"
+        layout_file = LAYOUT_FILES[args.layout]
         cfg["a4_layout"] = load_yaml(cfg_dir / layout_file)
+    if args.points == "aruco" and not args.replay and not cfg["a4_layout"].get("aruco"):
+        ap.error("--points aruco는 보정판 배치(--layout aruco)에서만 씁니다")
     use_layout(cfg["a4_layout"])
     log(f"[pac_vision] 설정 읽음: {cfg_dir.name}/camera.yaml, {cfg_dir.name}/{layout_file}, {cfg_dir.name}/thresholds.yaml")
     if not has_pose(cfg_dir):
