@@ -1,18 +1,34 @@
-"""저장소의 config/a4_layout.yaml이 올바른 형식인지 (숫자 값이 아니라 성질만) 확인한다.
+"""저장소의 config/a4_layout.yaml(두 장)과 a4_layout_single.yaml(한 장)이 올바른 형식인지 (숫자 값이 아니라 성질만).
 
 기준물 배치는 현장에서 바꿀 수 있으므로, 좌표 값 대신 캘리브레이션이 기대하는 성질을 검사한다.
 """
 import numpy as np
+import pytest
+import yaml
 
 import synth
 
+LAYOUTS = ("a4_layout.yaml", "a4_layout_single.yaml")
+_current = [LAYOUTS[0]]
+
+
+@pytest.fixture(autouse=True, params=LAYOUTS)
+def _which(request):
+    _current[0] = request.param
+
 
 def layout():
-    return synth.repo_config()["a4_layout"]
+    return yaml.safe_load((synth.CONFIG_DIR / _current[0]).read_text(encoding="utf-8"))
 
 
 def corners():
     return np.array(layout()["corners"], dtype=float)
+
+
+def test_single_sheet_is_one_a4():
+    c = np.array(yaml.safe_load((synth.CONFIG_DIR / "a4_layout_single.yaml").read_text(encoding="utf-8"))["corners"])
+    sides = np.linalg.norm(np.roll(c, -1, axis=0) - c, axis=1)
+    assert np.allclose(sides, [0.297, 0.21, 0.297, 0.21])               # 1-2 long, 2-3 short
 
 
 def signed_area_xy(c):

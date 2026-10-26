@@ -582,13 +582,21 @@ def main():
     ap.add_argument("--points", choices=sorted(POINT_FINDERS), default="click", help="기준점 찾기 방식 (지금은 click만)")
     ap.add_argument("--allow-default-pose", action="store_true",
                     help="시연용: config/pose.yaml(이 설치 자세의 정합 계수) 없이 camera.yaml 기본값으로 캘리브레이션")
+    ap.add_argument("--layout", choices=["double", "single"], default="double",
+                    help="기준 종이: double = A4 두 장 29.7x42.0 cm (a4_layout.yaml, 기본), "
+                         "single = A4 한 장 21.0x29.7 cm (a4_layout_single.yaml)")
     args = ap.parse_args()
     if (args.no_gui or args.use_current_config) and not args.replay:
         ap.error("--no-gui, --use-current-config는 --replay와 함께 씁니다")
 
     cfg_dir = Path(args.config_dir).resolve()
     cfg = _ui.load_config_or_exit(cfg_dir, ("camera", "a4_layout", "thresholds"))
-    log(f"[pac_vision] 설정 읽음: {cfg_dir.name}/camera.yaml, {cfg_dir.name}/a4_layout.yaml, {cfg_dir.name}/thresholds.yaml")
+    layout_file = "a4_layout.yaml"
+    if args.layout == "single" and not args.replay:      # --replay는 세션에 저장된 배치를 그대로 쓴다
+        from pac_vision.config import load_yaml
+        layout_file = "a4_layout_single.yaml"
+        cfg["a4_layout"] = load_yaml(cfg_dir / layout_file)
+    log(f"[pac_vision] 설정 읽음: {cfg_dir.name}/camera.yaml, {cfg_dir.name}/{layout_file}, {cfg_dir.name}/thresholds.yaml")
     if not has_pose(cfg_dir):
         msg = (f"{cfg_dir.name}/pose.yaml(이 설치 자세의 RGB→depth 정합 계수)이 없습니다. "
                "check_camera.py로 쌍을 잰 뒤 python tools/fit_rgb_to_depth.py <쌍 CSV> --write-pose로 만드세요")
