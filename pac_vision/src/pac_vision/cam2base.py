@@ -489,6 +489,8 @@ class CalibResult:
     camera_above: bool
     desk_z: dict
     checks: list = field(default_factory=list)
+    holdout_index: int | None = None      # 원점을 찍지 않는 배치: 하나 빼고 맞춘 오차가 가장 큰 꼭짓점 (클릭 순서 번호, 0부터)
+    polygon_index: tuple = (1, 2, 3, 4)   # base_points 중 종이 테두리를 이루는 점의 순서 (그리기용)
 
     @property
     def passed(self) -> bool:
@@ -539,19 +541,25 @@ def solve_calibration(depth_mm, clicks_rgb, cam: CameraModel, layout: dict, thr:
     plane: 클릭 5점을 감싸는 영역에서 책상 평면을 맞추고, 클릭 광선과 평면의 교점을 카메라 좌표로 쓴다.
     point: 클릭 점 주변 depth 중앙값으로 역투영한다.
     순서: 꼭짓점 4점 Kabsch → base 점 홀드아웃 → 5점 Kabsch(최종). 검사는 모두 계산해 checks에 담는다.
+
+    layout.base_clicked = false (원점이 종이 밖, 예: 로봇 베이스): 클릭은 꼭짓점 4점뿐이다. 홀드아웃은 꼭짓점 하나를 빼고
+    나머지 3점으로 맞춘 변환이 뺀 꼭짓점을 얼마나 틀리게 놓는지(가장 큰 값)로 대신하고, 최종 변환은 4점 Kabsch.
+    layout.cycle: 클릭 순서가 종이 테두리 순서가 아닐 때(예: 좌상·우상·좌하·우하) 테두리 순서 (1부터, 위에서 볼 때 반시계).
     """
     pc, cc, oc = thr["plane"], thr["calibration"], thr["objects"]
     clicks = np.asarray(clicks_rgb, dtype=float).reshape(-1, 2)
-    if len(clicks) != 5:
-        raise CalibrationError("clicks", f"클릭은 5점이어야 합니다 (받은 수 {len(clicks)})")
+    base_clicked = bool(layout.get("base_clicked", True))
+    n = 5 if base_clicked else 4
+    if len(clicks) != n:
+        raise CalibrationError("clicks", f"클릭은 {n}점이어야 합니다 (받은 수 {len(clicks)})")
     depth_mm = np.asarray(depth_mm)
     # 거리 식(d/Z 항)이면 클릭의 Z가 필요하다: z_ref_m으로 영역을 잡고, 평면(또는 점 depth)의 Z로 고정점 반복한다.
     # 고정 dx·dy면 반복 없이 예전과 같은 계산이다.
-    z0 = np.full(5, cam.z_ref_m) if cam.has_z_term else None
+    z0 = np.full(n, cam.z_ref_m) if cam.has_z_term else None
     ud, vd = cam.rgb_to_depth(clicks[:, 0], clicks[:, 1], rgb_size, z_m=z0)
 
     def check_inside(ud, vd):
-        outside = [i for i in range(5) if not (0 <= ud[i] < cam.width and 0 <= vd[i] < cam.height)]
+        outside = [i for i in range(n) if not (0 <= ud[i] < cam.width and 0 <= vd[i] < cam.height)]
         if outside:
             raise CalibrationError("outside", "depth 영상 밖의 클릭이 있습니다", outside)
 
@@ -578,7 +586,7 @@ def solve_calibration(depth_mm, clicks_rgb, cam: CameraModel, layout: dict, thr:
             ud, vd, cam_pts = cam.rgb_to_depth_on_plane(clicks[:, 0], clicks[:, 1], plane, rgb_size)
         else:
             cam_pts = intersect_ray_plane(cam.ray(ud, vd), plane)
-        bad = [i for i in range(5) if not np.all(np.isfinite(cam_pts[i]))]
+        bad = [i for i in range(n) if not np.all(np.isfinite(cam_pts[i]))]
         if bad:
             raise CalibrationError("ray_plane", "클릭 광선이 책상 평면과 만나지 않습니다", bad)
     elif mode == "point":
@@ -586,8 +594,8 @@ def solve_calibration(depth_mm, clicks_rgb, cam: CameraModel, layout: dict, thr:
         if cam.has_z_term:
             ud, vd = cam.rgb_to_depth_on_depth(clicks[:, 0], clicks[:, 1], depth_mm, half, rgb_size)
             check_inside(ud, vd)
-        z = np.array([patch_median(depth_mm, ud[i], vd[i], half) for i in range(5)])
-        missing = [i for i in range(5) if z[i] <= 0]
+        z = np.array([patch_median(depth_mm, ud[i], vd[i], half) for i in range(n)])
+        missing = [i for i in range(n) if z[i] <= 0]
         if missing:
             raise CalibrationError("no_depth", "depth가 없는 클릭이 있습니다", missing)
         cam_pts = cam.backproject(ud, vd, z)
@@ -596,13 +604,27 @@ def solve_calibration(depth_mm, clicks_rgb, cam: CameraModel, layout: dict, thr:
     valid_ratio = len(p_roi) / float(max(n_total, 1))
 
     base_pts = layout_points(layout)
-    corners_c, corners_b = cam_pts[1:], base_pts[1:]
+    if not base_clicked:
+        base_pts = base_pts[1:]                    # 원점은 찍지 않았다: 클릭과 같은 4점만
+    off = 1 if base_clicked else 0
+    cyc = [int(i) - 1 for i in layout.get("cycle", (1, 2, 3, 4))]
+    corners_c, corners_b = cam_pts[off:][cyc], base_pts[off:][cyc]      # 테두리 순서
     nxt = [1, 2, 3, 0]
     sides = np.linalg.norm(corners_c[nxt] - corners_c, axis=1)
     sides_exp = np.linalg.norm(corners_b[nxt] - corners_b, axis=1)
 
-    r4, t4 = kabsch(corners_c, corners_b)
-    holdout = float(np.linalg.norm(r4 @ cam_pts[0] + t4 - base_pts[0]))
+    holdout_index = None
+    if base_clicked:
+        r4, t4 = kabsch(corners_c, corners_b)
+        holdout = float(np.linalg.norm(r4 @ cam_pts[0] + t4 - base_pts[0]))
+    else:
+        errs = []
+        for i in range(4):
+            keep = [j for j in range(4) if j != i]
+            r3, t3 = kabsch(cam_pts[keep], base_pts[keep])
+            errs.append(float(np.linalg.norm(r3 @ cam_pts[i] + t3 - base_pts[i])))
+        holdout_index = int(np.argmax(errs))
+        holdout = errs[holdout_index]
     r, t = kabsch(cam_pts, base_pts)
     residuals = np.linalg.norm(cam_pts @ r.T + t - base_pts, axis=1)
 
@@ -611,7 +633,7 @@ def solve_calibration(depth_mm, clicks_rgb, cam: CameraModel, layout: dict, thr:
     above = camera_above_desk(t)
 
     # 변마다 화면 길이(px)와 그 방향 1 px의 실제 길이. 비스듬한 시점에서는 멀어지는 방향 변이 가장 짧게 보인다.
-    px = clicks[1:]
+    px = clicks[off:][cyc]
     sides_px = np.linalg.norm(px[nxt] - px, axis=1)
     m_per_px = sides_exp / np.maximum(sides_px, 1e-9)
     sides_tol = np.maximum(cc["a4_side_tol_m"], cc["a4_side_tol_px"] * m_per_px)
@@ -645,7 +667,7 @@ def solve_calibration(depth_mm, clicks_rgb, cam: CameraModel, layout: dict, thr:
         plane_rms_m=plane.rms_m if plane is not None else float("nan"),
         plane_inlier_ratio=plane.inlier_ratio if plane is not None else float("nan"),
         plane_normal=info_plane.normal, tilt_deg=tilt, handedness=bool(hand), camera_above=bool(above),
-        desk_z=desk, checks=checks)
+        desk_z=desk, checks=checks, holdout_index=holdout_index, polygon_index=tuple(off + i for i in cyc))
 
 
 # ---------------------------------------------------------------------------

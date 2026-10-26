@@ -22,13 +22,22 @@ def layout():
 
 
 def corners():
-    return np.array(layout()["corners"], dtype=float)
+    """꼭짓점을 종이 테두리 순서로 (cycle이 있으면 그 순서: 클릭 순서가 좌상·우상·좌하·우하인 배치)."""
+    lay = layout()
+    c = np.array(lay["corners"], dtype=float)
+    return c[[int(i) - 1 for i in lay.get("cycle", range(1, len(c) + 1))]]
 
 
-def test_single_sheet_is_one_a4():
-    c = np.array(yaml.safe_load((synth.CONFIG_DIR / "a4_layout_single.yaml").read_text(encoding="utf-8"))["corners"])
-    sides = np.linalg.norm(np.roll(c, -1, axis=0) - c, axis=1)
-    assert np.allclose(sides, [0.297, 0.21, 0.297, 0.21])               # 1-2 long, 2-3 short
+def test_single_sheet_is_one_a4_with_the_base_off_the_paper():
+    lay = yaml.safe_load((synth.CONFIG_DIR / "a4_layout_single.yaml").read_text(encoding="utf-8"))
+    c = np.array(lay["corners"], dtype=float)
+    assert lay["base_clicked"] is False and len(c) == 4
+    assert np.isclose(np.linalg.norm(c[0] - c[1]), 0.297) and np.isclose(np.linalg.norm(c[2] - c[3]), 0.297)   # 1-2, 3-4
+    assert np.isclose(np.linalg.norm(c[0] - c[2]), 0.21) and np.isclose(np.linalg.norm(c[1] - c[3]), 0.21)     # 1-3, 2-4
+    mid12 = (c[0] + c[1]) / 2
+    assert np.isclose(np.linalg.norm(mid12[:2]), 0.09)                    # base 9 cm from the middle of edge 1-2
+    centre = c.mean(axis=0)
+    assert np.isclose(centre[0], 0.0) and centre[1] > 0                   # +Y = base -> paper centre
 
 
 def signed_area_xy(c):

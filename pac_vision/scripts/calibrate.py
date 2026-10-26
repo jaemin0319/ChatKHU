@@ -38,6 +38,22 @@ CLICK_GUIDE = [
 POINT_LABELS = ["0 base", "1", "2", "3", "4"]     # 결과 화면에서 이 번호 키로 그 점만 다시 클릭
 POINT_NAMES = ["원점(0번)", "꼭짓점 1번", "꼭짓점 2번", "꼭짓점 3번", "꼭짓점 4번"]
 SIDE_NAMES = ["1-2", "2-3", "3-4", "4-1"]
+N_POINTS = 5            # 클릭 수 (원점을 찍지 않는 배치는 4)
+KEY0 = 0                # 결과 화면에서 이 숫자 키가 클릭 목록의 0번 (원점을 찍지 않는 배치는 1 = 꼭짓점 1)
+
+
+def use_layout(layout):
+    """배치(a4_layout*.yaml)에 맞춰 클릭 안내·번호 키·변 이름을 바꾼다. base_clicked: false면 꼭짓점 4개만 찍는다."""
+    global CLICK_GUIDE, POINT_LABELS, POINT_NAMES, SIDE_NAMES, N_POINTS, KEY0
+    cyc = [int(i) for i in layout.get("cycle", (1, 2, 3, 4))]
+    SIDE_NAMES = [f"{a}-{b}" for a, b in zip(cyc, cyc[1:] + cyc[:1])]
+    if layout.get("base_clicked", True):
+        return
+    names = list(layout.get("click_names") or [f"꼭짓점 {i}번" for i in range(1, 5)])
+    marks = "①②③④"
+    CLICK_GUIDE = [(f"{marks[i]} {names[i]}을 클릭하세요", f"{i + 1}) click corner {i + 1}", f"꼭짓점{i + 1}")
+                   for i in range(4)]
+    POINT_LABELS, POINT_NAMES, N_POINTS, KEY0 = ["1", "2", "3", "4"], names, 4, 1
 
 
 def mark(ok: bool, fail: str = "주의") -> str:
@@ -150,7 +166,7 @@ def depth_missing(c, depth, cam, thr, rgb_size, mode) -> bool:
 
 
 def reclick_one(screen, rgb, depth, cam, thr, rgb_size, mode, clicks, i):
-    """클릭 5점 중 i번(0 = 원점)만 다시 찍는다. 반환: 새 5점 / None(취소 → 그대로)."""
+    """클릭 점 중 i번(클릭 목록 번호, 5점 배치는 0 = 원점)만 다시 찍는다. 반환: 새 클릭 목록 / None(취소 → 그대로)."""
     log(f"[다시 클릭] {POINT_NAMES[i]}만 다시 찍습니다 (Esc: 취소)")
     warn_until = 0
     while True:
@@ -165,7 +181,7 @@ def reclick_one(screen, rgb, depth, cam, thr, rgb_size, mode, clicks, i):
                 log(f"[다시 클릭] {POINT_NAMES[i]}: ({old[0]}, {old[1]}) → ({c[0]}, {c[1]})")
                 return new
         vis = rgb.copy()
-        draw_clicks(vis, [p for j, p in enumerate(clicks) if j != i], [j for j in range(5) if j != i])
+        draw_clicks(vis, [p for j, p in enumerate(clicks) if j != i], [j for j in range(N_POINTS) if j != i])
         cv2.circle(vis, _ui.ipt(clicks[i]), 7, GRAY, 1, cv2.LINE_AA)      # 지금 위치 (회색 고리)
         _ui.magnifier(vis, screen.mouse)
         lines = [("○ 회색 고리 = 지금 위치    Esc: 취소 (그대로 두기)", "gray ring: current   Esc: cancel", WHITE)]
@@ -179,9 +195,9 @@ def reclick_one(screen, rgb, depth, cam, thr, rgb_size, mode, clicks, i):
 
 
 def click_loop(screen, rgb, depth, cam, thr, rgb_size, mode, back_allowed=True):
-    """클릭 5점을 돌려준다. None = 종료, "back" = 배치 점검으로 돌아가기."""
+    """클릭 점(5점 또는 꼭짓점 4점)을 돌려준다. None = 종료, "back" = 배치 점검으로 돌아가기."""
     clicks, warn, warn_until = [], None, 0
-    while len(clicks) < 5:
+    while len(clicks) < N_POINTS:
         c = screen.take_click()
         if c is not None:
             if depth_missing(c, depth, cam, thr, rgb_size, mode):
@@ -191,7 +207,7 @@ def click_loop(screen, rgb, depth, cam, thr, rgb_size, mode, back_allowed=True):
                 continue
             clicks.append(c)
             log(f"[클릭] {CLICK_GUIDE[len(clicks) - 1][2]:<7} RGB 픽셀 ({c[0]}, {c[1]})")
-            if len(clicks) == 5:
+            if len(clicks) == N_POINTS:
                 break
         vis = rgb.copy()
         draw_clicks(vis, clicks)
@@ -201,7 +217,8 @@ def click_loop(screen, rgb, depth, cam, thr, rgb_size, mode, back_allowed=True):
         lines = [(keys, "u: undo   r: restart   q: quit" + ("   b: back to live" if back_allowed else ""), WHITE)]
         if warn and cv2.getTickCount() < warn_until:
             lines.insert(0, (warn[0], warn[1], YELLOW))
-        screen.show(vis, lines, top=(f"{ko}  ({len(clicks) + 1}/5)", f"{en}  ({len(clicks) + 1}/5)", YELLOW))
+        screen.show(vis, lines, top=(f"{ko}  ({len(clicks) + 1}/{N_POINTS})", f"{en}  ({len(clicks) + 1}/{N_POINTS})",
+                                     YELLOW))
         k = screen.key(15)
         if k == ord("u") and clicks:
             p = clicks.pop()
@@ -229,13 +246,25 @@ def result_lines(res):
           GREEN if res.passed else RED),
          ("ⓘ ● 클릭한 점  ○ 계산 결과로 다시 그린 점 (둘이 겹치면 좋음)   축: 빨강 X(앞) 초록 Y(왼쪽) 파랑 Z(위)",
           "dot: clicked  ring: reprojected  red X(fwd) green Y(left) blue Z(up)", GRAY)]
-    # 1. 원점
-    L.append((f"1. 원점 위치 오차  {c_base.value * 100:.1f} cm   {mark(c_base.ok, '실패')}  "
-              f"(기준 {c_base.limit * 100:.1f} cm 이하 · 꼭짓점 4개로 계산한 원점과 클릭한 원점의 거리)",
-              f"base holdout {c_base.value * 100:.1f} cm (limit {c_base.limit * 100:.1f})", GREEN if c_base.ok else RED))
-    if not c_base.ok:
-        L.append(("   ▶ 원점 클릭이 대각선 교차점에서 벗어났거나 종이가 밀림 → 0 키: 원점만 다시 클릭 (종이를 옮겼으면 r 다음 b)",
-                  "  > key 0: re-click the base point (paper moved: r, then b)", RED))
+    # 1. 원점 (원점을 찍지 않는 배치: 꼭짓점 하나를 빼고 맞춘 오차)
+    if res.holdout_index is None:
+        L.append((f"1. 원점 위치 오차  {c_base.value * 100:.1f} cm   {mark(c_base.ok, '실패')}  "
+                  f"(기준 {c_base.limit * 100:.1f} cm 이하 · 꼭짓점 4개로 계산한 원점과 클릭한 원점의 거리)",
+                  f"base holdout {c_base.value * 100:.1f} cm (limit {c_base.limit * 100:.1f})", GREEN if c_base.ok else RED))
+        if not c_base.ok:
+            L.append(("   ▶ 원점 클릭이 대각선 교차점에서 벗어났거나 종이가 밀림 → 0 키: 원점만 다시 클릭 (종이를 옮겼으면 r 다음 b)",
+                      "  > key 0: re-click the base point (paper moved: r, then b)", RED))
+    else:
+        worst_c = POINT_LABELS[res.holdout_index]
+        L.append((f"1. 꼭짓점 맞춤 일관성  {c_base.value * 100:.1f} cm   {mark(c_base.ok, '실패')}  "
+                  f"(기준 {c_base.limit * 100:.1f} cm 이하 · 꼭짓점 하나를 빼고 나머지 3개로 맞췄을 때 뺀 꼭짓점의 오차 중 최대, "
+                  f"꼭짓점 {worst_c})",
+                  f"corner leave-one-out {c_base.value * 100:.1f} cm (limit {c_base.limit * 100:.1f})",
+                  GREEN if c_base.ok else RED))
+        if not c_base.ok:
+            L.append((f"   ▶ 꼭짓점 {worst_c}이(가) 다른 셋과 안 맞음 → {worst_c} 키: 그 꼭짓점만 모서리에 정확히 다시 클릭 "
+                      "(번호 위치가 좌상·우상·좌하·우하인지 확인)",
+                      f"  > key {worst_c}: re-click that corner", RED))
     # 2. A4 변
     worst = int(np.argmax(np.abs(res.sides_m - res.sides_expected_m) / res.sides_tol_m))
     sides = "  ".join(f"{n}: {m * 100:.1f}" for n, m in zip(SIDE_NAMES, res.sides_m))
@@ -279,8 +308,9 @@ def result_lines(res):
     if np.isfinite(res.plane_rms_m):
         info += f" · 책상 평면 맞춤 오차 {res.plane_rms_m * 1000:.1f} mm · 그 영역 깊이 측정 {res.roi_valid_ratio * 100:.0f} %"
     L.append((info, f"desk tilt ~{res.tilt_deg:.0f} deg (info)", GRAY))
-    L.append(("▶ s: 저장    0~4: 그 번호 점만 다시 클릭 (0 = 원점)    r: 처음부터 다시    q: 저장 없이 종료",
-              "s: save   0-4: re-click that point   r: restart   q: quit", WHITE))
+    keys = "0~4: 그 번호 점만 다시 클릭 (0 = 원점)" if N_POINTS == 5 else "1~4: 그 번호 꼭짓점만 다시 클릭"
+    L.append((f"▶ s: 저장    {keys}    r: 처음부터 다시    q: 저장 없이 종료",
+              f"s: save   {KEY0}-{KEY0 + N_POINTS - 1}: re-click that point   r: restart   q: quit", WHITE))
     return L
 
 
@@ -291,7 +321,7 @@ def log_result(res):
         log("[반사] 법선 손잡이 검사 실패: 꼭짓점이 위에서 볼 때 반시계 순서가 아니게 계산됨 (번호 순서 또는 depth 좌우반전 확인)")
     if not res.camera_above:
         log(f"[반사] 카메라 z 검사 실패: 카메라 위치 base z = {res.t[2]:+.3f} m (책상 아래로 계산됨)")
-    log(f"  (5점 RMS {np.sqrt(np.mean(res.residuals_m ** 2)) * 100:.2f} cm, 카메라 위치 base "
+    log(f"  ({N_POINTS}점 RMS {np.sqrt(np.mean(res.residuals_m ** 2)) * 100:.2f} cm, 카메라 위치 base "
         f"({res.t[0]:+.3f}, {res.t[1]:+.3f}, {res.t[2]:+.3f}) m)")
 
 
@@ -301,7 +331,7 @@ def draw_result(rgb, res, cam, rgb_size, axis_len):
     u0, v0, u1, v1 = res.roi
     us, vs = cam.depth_to_rgb(np.array([u0, u1 - 1]), np.array([v0, v1 - 1]), rgb_size, z_m=cam.z_ref_m)  # 표시용 근사
     _ui.dashed_rect(vis, (us[0], vs[0]), (us[1], vs[1]), CYAN)
-    poly = conv.base_to_pixel(res.base_points[1:], rgb_size=rgb_size)
+    poly = conv.base_to_pixel(res.base_points[list(res.polygon_index)], rgb_size=rgb_size)
     if np.all(np.isfinite(poly)):
         cv2.polylines(vis, [np.round(poly).astype(np.int32)], True, (0, 165, 255), 2, cv2.LINE_AA)
     proj = conv.base_to_pixel(res.base_points, rgb_size=rgb_size)
@@ -328,8 +358,8 @@ def result_loop(screen, rgb, res, cam, rgb_size, axis_len):
                 confirm = True
                 continue
             return "save"
-        if ord("0") <= k <= ord("4"):
-            return ("redo", k - ord("0"))
+        if ord("0") + KEY0 <= k < ord("0") + KEY0 + N_POINTS:
+            return ("redo", k - ord("0") - KEY0)
         if k == ord("r"):
             return "reclick"
         if k == ord("q"):
@@ -532,6 +562,7 @@ def run_replay(args, cfg, cfg_dir, text):
     path = Path(args.replay)
     current = cfg["camera"] if args.use_current_config else None
     res, s = replay_session(path, mode=args.depth_mode, camera_cfg=current)
+    use_layout(s["configs"]["a4_layout"])                 # 세션의 배치 (꼭짓점만 찍은 세션이면 4점)
     used_cam = current if current is not None else s["configs"]["camera"]
     log(f"[재현] {path} (저장 {s['created']}, depth 모드 {res.mode}"
         + (", 현재 camera.yaml 사용" if current is not None else ", 세션의 설정 사본 사용") + ")")
@@ -596,6 +627,7 @@ def main():
         from pac_vision.config import load_yaml
         layout_file = "a4_layout_single.yaml"
         cfg["a4_layout"] = load_yaml(cfg_dir / layout_file)
+    use_layout(cfg["a4_layout"])
     log(f"[pac_vision] 설정 읽음: {cfg_dir.name}/camera.yaml, {cfg_dir.name}/{layout_file}, {cfg_dir.name}/thresholds.yaml")
     if not has_pose(cfg_dir):
         msg = (f"{cfg_dir.name}/pose.yaml(이 설치 자세의 RGB→depth 정합 계수)이 없습니다. "
