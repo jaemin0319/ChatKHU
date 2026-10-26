@@ -194,6 +194,8 @@ p_world = R_z(90° − yaw) · (p_base − (x, y, 0))   MuJoCo world (로봇 바
 
 확인: 시뮬레이터를 켜고 모니터의 A(시작점) 표시가 실제 로봇 TCP 근처에 오는지, 기준축이 종이 원점·화살표와 겹치는지 본다.
 
+실물 팔(7-1절)은 모델 −Y 쪽에서 일하므로 `yaw_deg: -90`, `y_m: 0.003`이다(J1 축이 base_link 원점보다 모델 +Y로 2.984 mm).
+
 ## 7. 실행 (터미널 두 개)
 
 **터미널 1: 시뮬레이터**
@@ -240,6 +242,67 @@ python -m voice --list-mics       # 마이크 목록, --mic 번호로 고름
 | 새 목표 / 홈 | 새 목표 / (도착 후 질문에 답) | N / H | — |
 
 호출어 규칙: "쿠옹아"를 부른 뒤 30초 동안 호출어 없이 말해도 된다. 이 시간은 명령이 실제로 실행되거나 손으로 고칠 때만 늘어난다. 쿠옹이(앱)가 질문하면("계속 갈까요, 돌아갈까요?") 그 질문의 답 **한 번**은 호출어 없이 받는다. 답이 될 수 있는 명령만 실행하고(예: 계속 가 / 돌아가), "아니"나 엉뚱한 말에는 아무것도 움직이지 않는다. 멈춤은 언제나 받는다.
+
+## 7-1. 실물 팔로 실행 (`--real-arm`, `~/manipulator_control_ws` 연동)
+
+시뮬이 검증한 궤적을 실물이 **같은 시간표로** 따라간다. 실물은 `~/manipulator_control_ws`의 제어 프로그램(별도 venv)이 맡고, 시뮬은 소켓으로 궤적을 보낸다.
+
+**준비 (한 번)**
+- 로봇 캘리브레이션: `python -m manipulator_control calibrate` (그 작업공간 README). 12 V 전원을 다시 켰으면 다시 한다.
+- `pac_vision/config/robot_pose.yaml`: `x_m: 0.0`, `y_m: 0.003`, `yaw_deg: -90`.
+  - 실물은 모델 −Y 쪽에서 일한다. 실물 HOME이 시뮬 ready의 좌우 반대이고, 보정 자세에서 아래팔이 종이 쪽을 가리킨다.
+  - yaw가 −90이 아니면 `--real-arm`이 거부한다.
+- 카메라 보정(6절)은 그대로 쓴다.
+
+**실행 순서**
+1. 터미널 A (실물, 팔 옆에서, 12 V 스위치에 손):
+   ```bash
+   cd ~/manipulator_control_ws && source scripts/env.sh
+   python -m manipulator_control calibration-status   # 저장된 보정을 쓸 수 있는지 (읽기 전용)
+   python -m manipulator_control pinch                # 보정 검증 → HOME 미리보기 y → HOME → "시뮬 연결 대기"
+   ```
+2. 터미널 B (시뮬):
+   ```bash
+   cd ~/pinch_khu_ws/26_project_manipulator/mujoco_sim && source scripts/env.sh
+   python -m pinch_sim.app --real-arm --calib ../pac_vision/config/cam2base.yaml --video auto --voice-gateway
+   ```
+3. 터미널 A에 "시뮬 연결됨 … y = 무장"이 뜨면 실물 주변을 확인하고 **y**를 누른다. 이후로는 시뮬 승인(Y 키, "이 경로로 할게")이 실물을 움직인다.
+4. 터미널 C: 쿠옹이 (7절과 같음).
+
+**시뮬만 쓸 때와 다른 점**
+- 시뮬 팔이 실물 측정 자세를 그대로 보여 준다(물리 계산 없음). 모니터 아래에 "실물: ARMED …" 배지가 뜬다.
+- 시작 자세, 가동 범위, 목표 위치
+  - 시작 자세는 실물 HOME, 가동 범위는 실물 `robot.yaml`을 시뮬이 직접 읽는다.
+  - 목표는 로봇 −Y 쪽 r 0.25–0.30 m, θ −15°~55°이다. J1 = 0이 θ ≈ +20°이다.
+- 속도는 시뮬과 같다.
+  - 관절 최대 21.4°/s(= 22.5 × 0.95), 가속 1.2 rad/s² 이하.
+  - 실물 쪽 `--speed-scale 0.5`를 주면 같은 경로를 절반 속도로 간다.
+- V·Y는 실물이 무장(ARMED) 상태이고 상태 정보가 최신일 때만 된다. 실물이 거부하면(예: 시작 자세 차이) 이유가 뜨고 경로를 다시 만든다.
+- 실물도 받은 궤적을 다시 검사한다(가동 범위·제동점·속도·가속·모델 충돌). 시뮬 결과를 믿지 않는다.
+
+**정지**
+
+| 수단 | 결과 |
+|---|---|
+| 시뮬 X / "멈춰" | 실물이 감속 정지하고 무장은 유지된다(이어 가기·되돌아가기 가능). 시뮬은 실물이 정지를 확인할 때까지 "실행 중"이다 |
+| 터미널 A s/space, 패널 ■ | 정지하고 무장이 풀린다(다시 y) |
+| 시뮬 종료 또는 시뮬 멈춤(이동 중 1 s 넘게 응답 없음) | 실물이 스스로 감속 정지하고 연결 대기로 간다 |
+| 12 V 스위치 | 유일한 하드웨어 차단이다(팔이 처진다) |
+
+PC와 U2D2 사이 통신이 끊기면, 서보는 마지막 목표까지 가서 멈춘다. 마지막 목표는 궤적에서 최대 0.25 s 앞(5.6° 이하)이다.
+
+**첫 실기 순서 (권장)**
+1. `python -m manipulator_control pinch --check-only`로 시나리오를 한 바퀴 돈다. 모든 궤적이 실물 검사를 통과하는지 확인한다(이동 없음).
+2. 실제로 실행한다. 손은 12 V 스위치에 두고, 각 정지 수단을 한 번씩 써 본다.
+3. 실물 쪽 로그(`logs/sessions/*_pinch/events.jsonl`)의 `traj_done` metrics(`max_tracking_deg`, `max_following_deg`)로 임계값을 확인한다.
+
+**리허설 (실물 없이 같은 프로필)**
+
+`python -m pinch_sim.app --real-arm --rehearse --calib … --video auto`. 시뮬이 평소처럼 실행하고, 아무것도 움직이지 않는다.
+
+**시험**
+
+`python -m pytest tests/test_real_arm.py tests/test_arm_link_e2e.py`. e2e는 실물 프로그램을 가짜 서보로 실행하며 약 1분 걸린다.
 
 ## 8. 현장 시험 (Astra·마이크가 있을 때, 결과를 기록)
 

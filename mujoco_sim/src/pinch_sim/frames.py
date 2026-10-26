@@ -3,7 +3,8 @@
 world == base_link: the base mesh sits in the MuJoCo worldbody with identity
 pose, so no transform is applied between them. Every point is in metres,
 angles in radians, time in seconds. "Front" is +Y; theta is measured from +Y
-towards +X:  x = r sin(theta), y = r cos(theta).
+towards +X:  x = r sin(theta), y = r cos(theta). The real-arm profile
+(real_arm.py) works on -Y instead (target.front_y = -1): y = -r cos(theta).
 """
 from __future__ import annotations
 
@@ -40,9 +41,15 @@ class RobotState:
     units: dict = field(default_factory=lambda: {"q": "rad", "qd": "rad/s", "t": "s", "p": "m"})
 
 
-def polar_to_floor(r_m: float, theta_rad: float) -> np.ndarray:
-    """Floor point (z = 0) in world for radius r around base_link origin, theta from +Y."""
-    return np.array([r_m * np.sin(theta_rad), r_m * np.cos(theta_rad), 0.0])
+def polar_to_floor(r_m: float, theta_rad: float, front_y: float = 1.0) -> np.ndarray:
+    """Floor point (z = 0) in world for radius r around base_link origin, theta from the front (+Y, or -Y when
+    front_y = -1) towards +X."""
+    return np.array([r_m * np.sin(theta_rad), front_y * r_m * np.cos(theta_rad), 0.0])
+
+
+def theta_of(x: float, y: float, front_y: float = 1.0) -> float:
+    """Inverse of polar_to_floor's angle."""
+    return float(np.arctan2(x, front_y * y))
 
 
 def unit(v) -> np.ndarray:

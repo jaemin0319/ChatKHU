@@ -275,6 +275,20 @@ def validate(ctx: PlanningContext, path, live_qpos, live_qvel, live_time: float,
         det = {"q_min_rad": qq.min(0).tolist(), "q_max_rad": qq.max(0).tolist(), "margin_rad": m_}
         if viol[k, j] > 0:
             return Check("joint_limits", "FAIL", f"Revolute_{j+1} = {qq[k, j]:.3f} rad beyond limit-margin", int(k), det)
+        real = cfg.get("real_arm")
+        if real:
+            # the real arm streams this trajectory with a fixed profile acceleration: wherever it is stopped, its
+            # braking point (q + sgn(qd) qd^2 / 2a) must still be inside the real range
+            _, _, qd, _ = state["dense"]
+            a = np.radians(real["a_stream_deg_s2"])
+            brake = qq + np.sign(qd) * qd * qd / (2 * a)
+            bviol = np.maximum(idx.lo - brake, brake - idx.hi)
+            k, j = np.unravel_index(int(np.argmax(bviol)), bviol.shape)
+            if bviol[k, j] > 0:
+                return Check("joint_limits", "FAIL", f"Revolute_{j+1} braking point {brake[k, j]:.3f} rad beyond the "
+                             "real arm's range", int(k), det)
+            return Check("joint_limits", "PASS", f"within [lo+{m_}, hi-{m_}] rad of the real arm (robot.yaml), "
+                         "braking points inside", details=det)
         return Check("joint_limits", "PASS", f"within [lo+{m_}, hi-{m_}] rad (model limits +-pi)", details=det)
 
     # 7 ----------------------------------------------------------------------------------------

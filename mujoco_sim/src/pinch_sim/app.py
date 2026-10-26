@@ -53,7 +53,7 @@ import mujoco  # noqa: E402
 import mujoco.viewer  # noqa: E402
 import numpy as np  # noqa: E402
 
-from .model import ROOT, load_config, load_scene, ready_q, with_overrides  # noqa: E402
+from .model import ROOT, config_sha, load_config, load_scene, ready_q, with_overrides  # noqa: E402
 from .camera_model import CameraModel  # noqa: E402
 from .monitor import SimFrameSource, VideoFrameSource, draw_overlay_2d  # noqa: E402
 from .overlay import add_overlay, build_overlay, peak_text  # noqa: E402
@@ -320,6 +320,17 @@ def main(argv=None):
                     help="where the robot base centre stands in the calibration frame (m on the desk) and which "
                          "way it faces (deg, counter-clockwise from +X seen from above); default: robot_pose.yaml "
                          "next to --calib if it exists, else 0,0,0 = on the calibration origin facing +X")
+    ap.add_argument("--real-arm", action="store_true",
+                    help="plan for the real arm and run approved paths on it: python -m manipulator_control pinch "
+                         "(~/manipulator_control_ws) must be running and at HOME; its robot.yaml sets HOME and the "
+                         "joint ranges, the simulator shows the measured pose (real_arm.py, arm_link.py)")
+    ap.add_argument("--robot-yaml", metavar="PATH",
+                    help="--real-arm: the arm program's config/robot.yaml (default ~/manipulator_control_ws/config/robot.yaml)")
+    ap.add_argument("--rehearse", action="store_true",
+                    help="with --real-arm: the real arm's profile (HOME, ranges, its side of the desk) without the arm: "
+                         "the simulator executes as usual (rehearsal on the real camera image, nothing moves)")
+    ap.add_argument("--arm-link", metavar="SOCKET",
+                    help="--real-arm: the arm program's socket (default $XDG_RUNTIME_DIR/manipulator_control/arm.sock)")
     ap.add_argument("--depth", action="store_true",
                     help="Astra depth (pac_vision, OpenNI2) for the hand: a pinch moves the grabbed point by the "
                          "hand's 3-D motion, 1:1 (needs --hand, --video and a real pac_vision --calib)")
@@ -341,6 +352,11 @@ def main(argv=None):
         set_robot_pose(rx, ry, ryaw)
         print(f"robot base in the calibration frame: x={rx:.3f} y={ry:.3f} m, facing {ryaw:.1f} deg ({src})",
               flush=True)
+        if a.real_arm and abs((ryaw + 90.0 + 180.0) % 360.0 - 180.0) > 2.0:
+            ap.error(f"--real-arm: the real arm works on model -Y, so its pose must face -90 deg (robot_pose.yaml "
+                     f"yaw_deg: -90, y_m: +0.003 for the J1 axis offset), got {ryaw:.1f} ({src})")
+    elif a.real_arm and a.calib:
+        ap.error("--real-arm with a camera calibration needs robot_pose.yaml next to it (yaw_deg: -90, y_m: 0.003)")
     if a.depth and (a.hand is None or not a.video or not a.calib):
         ap.error("--depth needs --hand, --video (the Astra colour camera) and --calib (pac_vision cam2base.yaml)")
     calib_trust = ""            # "" = no real camera calibration in use; "file_ok" / "unverified" (see pac_calib)
@@ -380,6 +396,13 @@ def main(argv=None):
             calib_trust = "unverified" if problems else "file_ok"
 
     cfg = load_config()
+    arm = None
+    if a.real_arm:
+        from .real_arm import RealArm, apply_profile
+        try:
+            cfg = apply_profile(cfg, RealArm.load(a.robot_yaml))
+        except ValueError as exc:
+            ap.error(str(exc))
     if a.work_height is not None:
         if a.work_height < cfg["path"]["tcp_z_min_m"] and not a.allow_unsafe_test_geometry:
             ap.error("--work-height below tcp_z_min_m needs --allow-unsafe-test-geometry")
@@ -388,10 +411,29 @@ def main(argv=None):
     d = mujoco.MjData(m)
     d.qpos[:] = ready_q(m)
     mujoco.mj_forward(m, d)
+    if a.rehearse and not a.real_arm:
+        ap.error("--rehearse goes with --real-arm")
+    if a.real_arm and a.rehearse:
+        print("real arm profile, rehearsal: no link, the simulator executes (nothing real moves)", flush=True)
+    elif a.real_arm:
+        from .arm_link import ArmLink
+        from .real_arm import hello as arm_hello
+        try:
+            arm = ArmLink(arm_hello(cfg, sha, {"config_sha": config_sha(cfg)}), a.arm_link).connect()
+        except ConnectionError as exc:
+            ap.error(f"real arm: {exc}")
+        st = arm.state.get("state")
+        if st not in ("LINK_WAIT", "ARM_CONFIRM", "ARMED", "HOLDING") or arm.q_meas() is None:
+            arm.close()
+            ap.error(f"real arm is in {st}: start the simulator once the arm program says 시뮬 연결 대기 (after HOME)")
+        d.qpos[idx.qpos] = arm.q_meas()            # the simulator starts where the real arm is
+        mujoco.mj_forward(m, d)
+        print(f"real arm: {st}, q = {np.degrees(arm.q_meas()).round(2).tolist()} deg ({arm.address})", flush=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
     (ROOT / "logs").mkdir(exist_ok=True)
     session = Session(m, idx, sha, cfg, d, seed=a.seed, allow_unsafe=a.allow_unsafe_test_geometry,
                       log_path=ROOT / f"logs/session_{stamp}.jsonl")
+    session.real_arm = arm
     print(f"model {sha[:12]}  MuJoCo {mujoco.__version__}  log logs/session_{stamp}.jsonl")
     if a.target_r is not None:
         session.cmd_fixed_target(a.target_r, a.target_deg or 0.0, d)
@@ -601,7 +643,7 @@ def main(argv=None):
         # start the 3-D view from where the user stands, so "right" (a user direction) is right on screen;
         # the user can still rotate the 3-D view with the mouse
         from .canvas import user_view
-        look, dist, az, el = user_view(a.user_side)
+        look, dist, az, el = user_view(a.user_side, float(cfg["target"].get("front_y", 1.0)))
         viewer.cam.lookat[:] = look
         viewer.cam.distance, viewer.cam.azimuth, viewer.cam.elevation = dist, az, el
         wall0, sim0 = time.perf_counter(), d.time
@@ -654,6 +696,8 @@ def main(argv=None):
                     draw_axes(img, cam_model)
                 draw_ab(img, cam_model, ab_start, session.target.floor_point_m if session.target is not None else None)
             hint = "" if gateway is None else (gateway.client_line if gateway.connected else "쿠옹이 연결 대기")
+            if arm is not None:
+                hint = arm.badge() + (f"  |  {hint}" if hint else "")
             buttons = [(k, label, ENABLED[k](session.state)) for k, label in BUTTONS]
             img = ui.render(img, session, buttons, notices.current(), gateway.chat if gateway else [], hint,
                             protect_points(ov, cam_model, layout.scale))      # bubbles/notices never cover these
@@ -724,10 +768,16 @@ def main(argv=None):
                                    depth_reason=depth_why)
             if gateway is not None:          # voice requests: same thread, same Session methods, after keys
                 gateway.drain(session, d)
+            if arm is not None:              # real arm: ping, measured pose (twin), ack / result, lost link
+                msgs = arm.drain()
+                with viewer.lock():
+                    session.on_arm(d, msgs)
             if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
                 viewer.close()
     if gateway is not None:
         gateway.close()
+    if arm is not None:
+        arm.close()
     if hand_cam is not None:
         hand_cam.close()
     if depth_src is not None:

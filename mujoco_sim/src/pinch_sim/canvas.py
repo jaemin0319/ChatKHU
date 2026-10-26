@@ -65,10 +65,10 @@ def user_axes(side: str) -> dict[str, np.ndarray]:
     return {"up": up, "down": -up, "right": right, "left": -right, "away": away, "toward_me": -away}
 
 
-def user_view(side: str) -> tuple[np.ndarray, float, float, float]:
+def user_view(side: str, front_y: float = 1.0) -> tuple[np.ndarray, float, float, float]:
     """MuJoCo free-camera (lookat, distance, azimuth, elevation) from where the user stands."""
     away = user_axes(side)["away"]
-    lookat = np.array([0.0, 0.18, 0.12])                          # middle of the work area, in front of the robot
+    lookat = np.array([0.0, 0.18 * front_y, 0.12])                # middle of the work area, in front of the robot
     return lookat, 1.15, float(np.degrees(np.arctan2(away[1], away[0]))), -25.0
 
 

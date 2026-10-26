@@ -96,7 +96,11 @@ class RobotIndex:
 
 
 def load_scene(cfg: dict) -> tuple[mujoco.MjModel, RobotIndex, str]:
-    """Load the generated scene; returns (model, index, model_sha of the XML file)."""
+    """Load the generated scene; returns (model, index, model_sha of the XML file). A config with the real-arm
+    profile (real_arm.apply_profile) gets the real arm's HOME, ranges and the mirrored desk (real_arm.load_scene)."""
+    if cfg.get("real_arm"):
+        from .real_arm import load_scene as load_real
+        return load_real(cfg)
     path = ROOT / cfg["model"]["generated_scene"]
     if not path.exists():
         raise FileNotFoundError(f"{path} missing: run `python -m pinch_sim.build_scene` first")

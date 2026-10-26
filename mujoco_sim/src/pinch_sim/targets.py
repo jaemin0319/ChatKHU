@@ -34,29 +34,37 @@ class TargetSpec:
         return out
 
 
+def theta_range(tcfg: dict) -> tuple[float, float]:
+    """The allowed theta (deg): target.theta_range_deg [lo, hi] if set (real-arm profile), else +-theta_max_deg."""
+    if tcfg.get("theta_range_deg"):
+        lo, hi = tcfg["theta_range_deg"]
+        return float(lo), float(hi)
+    return -float(tcfg["theta_max_deg"]), float(tcfg["theta_max_deg"])
+
+
 def make_target(r_m: float, theta_rad: float, tcfg: dict, *, seed=None, trial=None, draw=None,
                 allow_out_of_range: bool = False, theta_range_deg=None) -> TargetSpec:
-    """theta_range_deg=(lo, hi) replaces the default +-theta_max_deg check (used for the New-key bands)."""
+    """theta_range_deg=(lo, hi) replaces the default range check (used for the New-key bands)."""
     if not allow_out_of_range:
         if not (tcfg["r_min_m"] - 1e-12 <= r_m <= tcfg["r_max_m"] + 1e-12):
             raise ValueError(f"r={r_m} outside [{tcfg['r_min_m']}, {tcfg['r_max_m']}] m")
-        lo, hi = theta_range_deg or (-tcfg["theta_max_deg"], tcfg["theta_max_deg"])
+        lo, hi = theta_range_deg or theta_range(tcfg)
         if not (lo - 1e-9 <= np.degrees(theta_rad) <= hi + 1e-9):
             raise ValueError(f"theta={np.degrees(theta_rad):.2f} deg outside [{lo}, {hi}] deg")
-    floor = polar_to_floor(r_m, theta_rad)
+    floor = polar_to_floor(r_m, theta_rad, float(tcfg.get("front_y", 1.0)))
     return TargetSpec(float(r_m), float(theta_rad), floor,
                       floor + [0.0, 0.0, tcfg["work_height_m"]],
                       floor + [0.0, 0.0, tcfg["approach_height_m"]], DOWN.copy(), seed, trial, draw)
 
 
 def draw_polar(rng: np.random.Generator, tcfg: dict, theta_band_deg=None) -> tuple[float, float]:
-    """Radius from the configured range; theta uniform in theta_band_deg (lo, hi) or +-theta_max_deg."""
+    """Radius from the configured range; theta uniform in theta_band_deg (lo, hi) or the configured range."""
     r0, r1 = tcfg["r_min_m"], tcfg["r_max_m"]
     if tcfg.get("r_dist", "area_uniform") == "area_uniform":
         r = float(np.sqrt(rng.uniform(r0 * r0, r1 * r1)))
     else:
         r = float(rng.uniform(r0, r1))
-    lo, hi = theta_band_deg or (-tcfg["theta_max_deg"], tcfg["theta_max_deg"])
+    lo, hi = theta_band_deg or theta_range(tcfg)
     th = float(np.radians(rng.uniform(lo, hi)))
     return r, th
 

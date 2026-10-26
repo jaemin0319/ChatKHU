@@ -45,11 +45,11 @@ import numpy as np
 from .collision import CollisionChecker
 from .editing import PathEdit
 from .control import ComputedTorque, TrajectoryExecutor, controlled_step
-from .frames import DOWN, WORLD, Pose, RobotState
+from .frames import DOWN, WORLD, Pose, RobotState, theta_of
 from .kinematics import Kinematics
 from .model import RobotIndex, config_sha, ready_q
 from .paths import CartesianPath, PathGenerationError, initial_path, polyline_distance, return_path
-from .targets import TargetSpec, make_target, precheck, sample_target
+from .targets import TargetSpec, make_target, precheck, sample_target, theta_range
 from .validation import Goal, PlanningContext, ValidationReport, validate
 
 STATES = ("HOLD", "GENERATED", "SELECTED", "VALIDATING", "PASSED", "FAILED", "EXECUTING", "DONE", "ABORTED")
@@ -100,6 +100,9 @@ class Session:
         self.edit: PathEdit | None = None     # editing session of the current generated path
         self.report: ValidationReport | None = None
         self.executor: TrajectoryExecutor | None = None
+        # --real-arm: the link to the arm's program (arm_link.ArmLink). The simulator then shows the measured pose
+        # (digital twin: no physics), V / Y need the armed arm, and an approval runs on the real arm
+        self.real_arm = None
         self.last_run: dict | None = None
         self.message = "N: new target"
         self.events: list[Event] = []
@@ -252,6 +255,14 @@ class Session:
     # ------------------------------------------------------------------ physics (caller's thread)
     def physics_step(self, d: mujoco.MjData) -> None:
         self._t_sim = float(d.time)
+        if self.real_arm is not None:           # twin: the pose comes from the real arm (on_arm), time only moves
+            d.time += self.m.opt.timestep
+            if self.state == "EXECUTING":
+                ex = self.executor
+                ex.step(d)
+                if ex.status != "RUNNING":
+                    self._finish_execution(d)
+            return
         if self.state == "EXECUTING":
             ex = self.executor
             ex.step(d)
@@ -263,6 +274,10 @@ class Session:
 
     def _finish_execution(self, d) -> None:
         ex = self.executor
+        if getattr(ex, "refused", False):          # the real arm refused it before moving: back to a fresh path
+            self.executor = None
+            self._regenerate(d, ex.reason)
+            return
         met = ex.metrics.to_dict()
         # executed TCP vs the approved (possibly edited) path polyline
         dev = polyline_distance(np.array(ex.trace), self.path.points_m) if ex.trace else np.array([np.nan])
@@ -273,7 +288,7 @@ class Session:
         self.last_exec = {"path": self.path, "goal": self.goal, "phase": self.phase, "status": ex.status,
                           "kind": self.move_kind}
         if ex.status == "DONE":
-            self.hold_q = ex.traj.q_knots[-1].copy()
+            self.hold_q = d.qpos[self.idx.qpos].copy() if self.real_arm is not None else ex.traj.q_knots[-1].copy()
             # stopped and went back: back to that move's editing (outbound, edited return) - not a new question
             nxt = ""
             if self._resume_dir == "back":
@@ -329,7 +344,8 @@ class Session:
         t = res.target
         self.target_label = label
         print(f"[{label}] r = {t.r_m:.3f} m, theta = {np.degrees(t.theta_rad):+.1f} deg"
-              + (f" (band {band[0]:+.0f}..{band[1]:+.0f} deg)" if band else " (+-%.0f deg)" % self.cfg["target"]["theta_max_deg"]),
+              + (f" (band {band[0]:+.0f}..{band[1]:+.0f} deg)" if band else
+                 " (%+.0f..%+.0f deg)" % theta_range(self.cfg["target"])),
               flush=True)
         return self._use_target(t, d, extra=f"{label}; {res.message}; rejected draws {len(res.attempts) - 1}",
                                 kind="new_target",
@@ -354,7 +370,7 @@ class Session:
         d.qvel[self.idx.dof] = 0.0
         mujoco.mj_forward(self.m, d)
         self.hold_q = ik.q.copy()
-        t = TargetSpec(float(np.hypot(b[0], b[1])), float(np.arctan2(b[0], b[1])), b.copy(),
+        t = TargetSpec(float(np.hypot(b[0], b[1])), theta_of(b[0], b[1], tc.get("front_y", 1.0)), b.copy(),
                        b + [0.0, 0.0, tc["work_height_m"]], b + [0.0, 0.0, tc["approach_height_m"]], DOWN.copy())
         self.ab = (a.copy(), t)
         self.target_label = "A/B"
@@ -378,7 +394,7 @@ class Session:
             self._emit(f"camera target refused: {why}", "refused")
             return False, why.upper()
         tc, b = self.cfg["target"], np.asarray(top, float)
-        t = TargetSpec(float(np.hypot(b[0], b[1])), float(np.arctan2(b[0], b[1])), b.copy(),
+        t = TargetSpec(float(np.hypot(b[0], b[1])), theta_of(b[0], b[1], tc.get("front_y", 1.0)), b.copy(),
                        b + [0.0, 0.0, tc["work_height_m"]], b + [0.0, 0.0, tc["approach_height_m"]], DOWN.copy())
         self.target_label = "camera"
         ok = self._use_target(t, d, extra=f"camera object top {np.round(b, 3).tolist()} (world)", kind="new_target")
@@ -577,6 +593,9 @@ class Session:
         if self.state not in ("SELECTED", "FAILED") or self.path is None:
             self._emit(f"V ignored in {self.state}", "refused")
             return False
+        if self.real_arm is not None and (why := self.real_arm.gate()):
+            self._emit(f"V refused: {why}", "refused")
+            return False
         self._invalidate("new validation")
         token = self._token
         args = (self.ctx, self.path, d.qpos.copy(), d.qvel.copy(), float(d.time), self.goal)
@@ -653,12 +672,21 @@ class Session:
             self._emit(f"Y refused: not validated ({self.state})" if self.state != "FAILED"
                        else "Y refused: validation failed - execution blocked", "refused")
             return False
+        if self.real_arm is not None and (why := self.real_arm.gate()):
+            self._emit(f"Y refused: {why}", "refused")
+            return False
         problems = self.binding_problems(d)
         if problems:
             self._regenerate(d, "approval refused, report invalidated: " + "; ".join(problems))
             return False
-        self.executor = TrajectoryExecutor(self.m, self.idx, self.report.trajectory, self.cfg["control"],
-                                           t0=float(d.time))
+        if self.real_arm is not None:
+            from .arm_link import RealArmExecutor
+            self.executor = RealArmExecutor(self.real_arm, self.m, self.idx, self.report.trajectory, self.report,
+                                            self.kin, t0=float(d.time), dt=float(self.cfg["timing"]["dt_check_s"]),
+                                            move=self.move_kind)
+        else:
+            self.executor = TrajectoryExecutor(self.m, self.idx, self.report.trajectory, self.cfg["control"],
+                                               t0=float(d.time))
         self.auto_run = None
         self.edit_mode = False
         if self.path.path_id in ("to_target", "return_reverse"):     # keep the clicked point with its edits
@@ -698,6 +726,10 @@ class Session:
             self.edit_cancel()
             return "drag"
         if self.state == "EXECUTING":
+            if self.real_arm is not None:          # the run ends with the arm's confirmation (or its timeout)
+                self.executor.request_stop("user stop (X)")
+                self._emit("stop sent to the real arm: waiting for its confirmation", "stop_requested")
+                return "execution"
             self.executor._abort("user stop (X)")
             self._finish_execution(d)
             return "execution"
@@ -903,6 +935,38 @@ class Session:
         self._edited(f"{name}: {self.edit.message}", name)
         return True
 
+    # ------------------------------------------------------------------ real arm (--real-arm)
+    def on_arm(self, d, msgs: list[dict]) -> None:
+        """Main loop, under the viewer lock: the arm's messages since the last frame. The measured pose becomes the
+        simulator's pose (twin); ack / result go to the running executor; a lost link stops everything."""
+        arm = self.real_arm
+        q = arm.q_meas()
+        for msg in msgs:
+            if msg.get("type") == "_down":
+                self._arm_down(d, msg.get("reason", ""))
+            elif msg.get("type") in ("ack", "result") and self.state == "EXECUTING":
+                self.executor.on_message(msg, q)
+        if q is not None and arm.up:
+            d.qpos[self.idx.qpos] = q
+            d.qvel[self.idx.dof] = 0.0
+            mujoco.mj_forward(self.m, d)
+            self.hold_q = q.copy()
+            if self.state == "EXECUTING":
+                ex = (arm.state.get("execution") or {})
+                self.executor.on_twin(q, ex.get("t_s") if ex.get("traj_id") == self.executor.traj_id else None, d)
+        if self.state == "EXECUTING" and self.executor.status != "RUNNING":
+            self._finish_execution(d)
+
+    def _arm_down(self, d, why: str) -> None:
+        self._emit(f"real arm link lost: {why}", "arm_link")
+        self.cancel_auto_run("real arm link lost")
+        if self.state == "EXECUTING":
+            self.executor.lost(why)
+            self._finish_execution(d)
+        elif self.state in ("PASSED", "VALIDATING"):
+            self._invalidate(f"real arm link lost: {why}")
+            self._set("SELECTED", f"real arm link lost ({why}): validate again after reconnecting", "arm_link")
+
     # ------------------------------------------------------------------ snapshot for the voice process
     def status(self) -> dict:
         ed, rep, t = self.edit, self.report, self.target
@@ -925,6 +989,9 @@ class Session:
                "target": None if t is None else {"label": self.target_label, "r_m": round(float(t.r_m), 4),
                                                   "theta_deg": round(float(np.degrees(t.theta_rad)), 2)},
                "report": None, "last_run": None}
+        if self.real_arm is not None:
+            arm = self.real_arm
+            out["real_arm"] = {"up": arm.up, "state": arm.state.get("state"), "armed": arm.armed, "gate": arm.gate()}
         if rep is not None:
             out["report"] = {"summary": rep.summary(), "execution_allowed": rep.execution_allowed,
                              "blocking": rep.blocking()[:3],
