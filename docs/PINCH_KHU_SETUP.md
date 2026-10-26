@@ -119,6 +119,8 @@ python scripts/check_setup.py                           # 보정 전에는 pose.
 
 장치 번호를 어디에도 고정하지 않는다. 시뮬레이터 `--video auto`와 pac_vision 스크립트는 이름(`camera.yaml`의 `rgb.name_match: Astra`)으로 찾는다. 같은 이름의 노드가 둘이면 프레임이 나오는 쪽을 쓴다.
 
+**카메라를 위아래로 뒤집어 달았으면**(거치대에 거꾸로 매단 경우) `pac_vision/config/local.yaml`의 `camera:` 아래에 `rotate_180: true`를 넣는다. RGB와 깊이를 둘 다 180° 돌려 읽어 화면·클릭·손 인식이 바로 선다. 정합 계수는 돌린 좌표의 값이어야 하므로, 돌리기 전에 잰 `pose.yaml`(또는 프리셋)은 `python tools/rotate_pose_180.py [--from <파일>]`로 바꾼다. 돌린 뒤에 정합 쌍을 새로 재면 그대로 맞다. 보정(`cam2base.yaml`)은 회전 설정과 함께 저장되고, 시뮬레이터는 회전 설정이 다른 보정을 거부하며 영상도 그 설정대로 돌린다.
+
 카메라는 **한 프로그램만** 연다. 시뮬레이터와 pac_vision 스크립트가 같은 잠금(`$XDG_RUNTIME_DIR/pac_camera.lock`)을 써서, 다른 쪽이 쓰는 중이면 누가 쓰는지 알려 주고 열지 않는다.
 
 ## 6. 보정 (카메라를 놓거나 옮길 때마다)

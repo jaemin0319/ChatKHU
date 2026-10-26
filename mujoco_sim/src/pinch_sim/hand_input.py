@@ -54,6 +54,7 @@ class HandConfig:
     width: int = 640
     height: int = 480
     mirror: bool = True              # selfie view: moving the hand right moves the cursor right
+    rotate_180: bool = False         # camera mounted upside down (pac_vision camera.rotate_180): frames turned first
     pinch_close: float = 0.28
     pinch_open: float = 0.45
     debounce_s: float = 0.08
@@ -418,6 +419,8 @@ class HandCamera:
                     self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 time.sleep(0.01)
                 continue
+            if self.cfg.rotate_180:
+                frame = np.ascontiguousarray(frame[::-1, ::-1])
             if self.cfg.mirror:
                 frame = np.ascontiguousarray(frame[:, ::-1])
             res = self._hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))

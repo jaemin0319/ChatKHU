@@ -424,6 +424,11 @@ def main(argv=None):
                   flush=True)
         ab_start = session.ab[0] if session.ab is not None else session.robot_state(d).tcp.p_m.copy()
     hand_cam = None
+    # camera mounted upside down: the calibration was made on 180-degree turned frames (pac_vision camera.rotate_180),
+    # so the live frames are turned the same way (the depth stream turns itself, AstraDepth.rotate_180)
+    rotate_180 = bool(getattr(cam_model, "conv", None) and (cam_model.conv.info.get("camera") or {}).get("rotate_180"))
+    if rotate_180:
+        print("camera: mounted upside down (rotate_180): colour and depth frames turned by 180 deg", flush=True)
     if a.video:
         if not (a.monitor_calib or a.calib):
             ap.error("--video needs --calib (or --monitor-calib): the path is projected with the real camera's "
@@ -433,7 +438,8 @@ def main(argv=None):
             # hand tracking input (the hand is in the picture, so the finger is drawn where it really is)
             from .hand_input import HandCamera, HandConfig
             try:
-                hand_cam = HandCamera(HandConfig(mirror=False), device=str(a.video), set_size=False)
+                hand_cam = HandCamera(HandConfig(mirror=False, rotate_180=rotate_180), device=str(a.video),
+                                      set_size=False)
             except RuntimeError as exc:
                 renderer.close()                  # no EGL clean-up noise after the message
                 ap.error(f"{exc}. {camera_list()}")
@@ -454,7 +460,7 @@ def main(argv=None):
             source = _SharedSource()
         else:
             try:
-                source = VideoFrameSource(a.video)
+                source = VideoFrameSource(a.video, rotate_180=rotate_180)
             except RuntimeError as exc:
                 renderer.close()
                 ap.error(f"{exc}. {camera_list()}")

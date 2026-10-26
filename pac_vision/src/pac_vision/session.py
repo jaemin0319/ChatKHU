@@ -162,5 +162,7 @@ def calibration_mismatches(conv: Cam2Base, current_camera_cfg: dict) -> list[str
     flip_b = bool((current_camera_cfg.get("depth") or {}).get("flip", False))
     if flip_a != flip_b:
         out.append("depth.flip")
+    if bool((conv.info.get("camera") or {}).get("rotate_180", False)) != bool(current_camera_cfg.get("rotate_180", False)):
+        out.append("rotate_180")
     return out
 

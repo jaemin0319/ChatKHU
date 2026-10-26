@@ -47,7 +47,8 @@ class SimFrameSource:
 
 
 class VideoFrameSource:
-    def __init__(self, spec: str):
+    def __init__(self, spec: str, rotate_180: bool = False):
+        self.rotate_180 = rotate_180     # camera mounted upside down (pac_vision camera.rotate_180)
         self.cap = cv2.VideoCapture(int(spec) if str(spec).isdigit() else spec)
         if not self.cap.isOpened():
             raise RuntimeError(f"cannot open video source {spec!r}")
@@ -62,7 +63,7 @@ class VideoFrameSource:
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             ok, img = self.cap.read()
         if ok:
-            self.last = img
+            self.last = np.ascontiguousarray(img[::-1, ::-1]) if self.rotate_180 else img
         if self.last is None:
             raise RuntimeError("no frame from video source")
         return self.last.copy()

@@ -17,7 +17,7 @@ CONFIG_NAMES = ("camera", "a4_layout", "frames", "thresholds", "detect")
 
 # 덮어쓰기 파일이 받는 키 (설정 이름 → 점으로 이은 경로)
 LOCAL_KEYS = {
-    "camera": ("rgb.device", "openni.redist", "ui.font"),
+    "camera": ("rgb.device", "openni.redist", "ui.font", "rotate_180"),
     "detect": ("model", "device"),
 }
 POSE_KEYS = {

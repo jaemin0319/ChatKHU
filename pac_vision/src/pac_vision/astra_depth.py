@@ -14,9 +14,10 @@ from .config import expand_path
 
 
 class AstraDepth:
-    def __init__(self, redist: str, flip: bool = True, expected_size=(640, 480)):
+    def __init__(self, redist: str, flip: bool = True, expected_size=(640, 480), rotate_180: bool = False):
         self.redist = expand_path(redist)
         self.flip = bool(flip)
+        self.rotate_180 = bool(rotate_180)       # 카메라를 뒤집어 달았을 때: 좌우반전 뒤에 180° 회전 (RGB도 같이 돌린다)
         self.expected_size = tuple(expected_size)
         self._openni2 = None
         self._dev = None
@@ -26,7 +27,8 @@ class AstraDepth:
     @classmethod
     def from_config(cls, camera_cfg: dict) -> "AstraDepth":
         d = camera_cfg["depth"]
-        return cls(camera_cfg["openni"]["redist"], d.get("flip", True), (d["width"], d["height"]))
+        return cls(camera_cfg["openni"]["redist"], d.get("flip", True), (d["width"], d["height"]),
+                   rotate_180=bool(camera_cfg.get("rotate_180", False)))
 
     def open(self) -> "AstraDepth":
         # ⚠️ Jazzy: openni 파이썬 패키지와 Orbbec redist 경로가 컴퓨터마다 다름 (config/camera.yaml)
@@ -44,6 +46,7 @@ class AstraDepth:
         self._last_index = getattr(frame, "frameIndex", None)
         d = np.frombuffer(frame.get_buffer_as_uint16(), dtype=np.uint16).reshape(frame.height, frame.width)
         d = d[:, ::-1] if self.flip else d
+        d = d[::-1, ::-1] if self.rotate_180 else d
         return np.array(d, copy=True)           # OpenNI 버퍼는 다음 프레임에 덮어쓰이므로 항상 복사 (flip이 없어도)
 
     @property

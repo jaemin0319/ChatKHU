@@ -173,6 +173,20 @@ def rgb_device_candidates(name_match: str, root="/sys/class/video4linux"):
     return sorted(out)
 
 
+class Rotated180:
+    """cv2.VideoCapture처럼 쓰되 read()가 180° 돌린 프레임을 준다 (camera.rotate_180, depth도 같이 돌린다)."""
+
+    def __init__(self, cap):
+        self._cap = cap
+
+    def read(self):
+        ok, frame = self._cap.read()
+        return ok, (np.ascontiguousarray(frame[::-1, ::-1]) if ok and frame is not None else frame)
+
+    def __getattr__(self, name):
+        return getattr(self._cap, name)
+
+
 def open_rgb(camera_cfg):
     """Astra RGB(UVC) 열기. 실제로 받은 크기를 돌려준다.
 
@@ -209,6 +223,9 @@ def open_rgb(camera_cfg):
                 log(f"[pac_vision] ⚠️ RGB 요청 {r['width']}x{r['height']} → 실제 {size[0]}x{size[1]}")
             global opened_rgb_device
             opened_rgb_device = dev
+            if camera_cfg.get("rotate_180"):
+                log("[pac_vision] 카메라를 뒤집어 단 설정(rotate_180): RGB·depth를 180° 돌려 읽습니다")
+                return Rotated180(cap), size
             return cap, size
         cap.release()
     sys.exit(f"[pac_vision] RGB 카메라를 열지 못했습니다 (시도한 장치 {devices}). 다른 프로그램이 쓰는 중인지 "

@@ -50,6 +50,22 @@ def rgb_depth_coef(value) -> tuple:
     return (float(value), 0.0, 0.0, 0.0)
 
 
+def rotate_rgb_to_depth_180(m: dict, rgb_size=(640, 480), depth_size=(640, 480)) -> dict:
+    """정합 계수(rgb_to_depth 설정)를 RGB·depth 영상을 둘 다 180° 돌린 좌표의 값으로 바꾼다 (camera.rotate_180).
+
+    돌린 좌표 u' = W-1-u, v' = H-1-v (RGB는 기준 크기, depth는 depth 크기)를 u_d = sx·u + a + b·u + c·v + d/Z에
+    넣으면 같은 꼴이 되고 b, c는 그대로, d는 부호만, a만 바뀐다:
+      a_x' = (Wd-1) - (sx+b_x)(Wr-1) - a_x - c_x(Hr-1),   a_y' = (Hd-1) - (sy+c_y)(Hr-1) - a_y - b_y(Wr-1)."""
+    (wr, hr), (wd, hd) = rgb_size, depth_size
+    sx, sy = float(m.get("sx", 1.0)), float(m.get("sy", 1.0))
+    ax, bx, cx, dx = rgb_depth_coef(m["dx"])
+    ay, by, cy, dy = rgb_depth_coef(m["dy"])
+    out = dict(m)
+    out["dx"] = {"a": round((wd - 1) - (sx + bx) * (wr - 1) - ax - cx * (hr - 1), 6), "b": bx, "c": cx, "d": -dx}
+    out["dy"] = {"a": round((hd - 1) - (sy + cy) * (hr - 1) - ay - by * (wr - 1), 6), "b": by, "c": cy, "d": -dy}
+    return out
+
+
 @dataclass(frozen=True)
 class CameraModel:
     fx: float

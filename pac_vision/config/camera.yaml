@@ -1,6 +1,11 @@
 # Astra Pro 카메라 설정. 길이 단위는 m (depth 원본 영상만 mm).
 # 카메라 광학 좌표계: +X 오른쪽, +Y 아래, +Z 정면 (depth 좌우반전 보정 후, REP-103)
 
+# 카메라를 위아래로 뒤집어 달았으면 config/local.yaml에 rotate_180: true. RGB와 depth를 둘 다 180° 돌려서 읽고
+# (화면·클릭·계산 모두 돌린 좌표), 정합 계수(pose.yaml)도 돌린 좌표의 값이어야 한다:
+# 돌리기 전에 잰 계수는 python tools/rotate_pose_180.py로 바꾼다 (정합 쌍을 돌린 뒤에 새로 재면 그대로 맞다).
+rotate_180: false
+
 openni:
   # Orbbec OpenNI2 redist 폴더 (libOpenNI2.so가 있는 곳). ~ 는 홈 폴더로 바뀐다.
   # ⚠️ 컴퓨터마다 다름: 다르면 이 파일을 고치지 말고 config/local.yaml에 openni.redist를 적는다

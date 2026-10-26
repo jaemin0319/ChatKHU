@@ -10,6 +10,7 @@ dist/
 config/cam2base.yaml
 config/local.yaml
 config/pose.yaml
+config/pose.yaml.bak
 config/markers.yaml
 config/markers.check.yaml
 config/robot_pose.yaml
