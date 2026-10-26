@@ -244,7 +244,8 @@ def result_lines(res):
     L = [("【보정 결과】 " + verdict + ("" if res.mode == "plane" else "   (depth 모드: point)"),
           "Calibration result - " + ("all checks passed" if res.passed else "some checks failed"),
           GREEN if res.passed else RED),
-         ("ⓘ ● 클릭한 점  ○ 계산 결과로 다시 그린 점 (둘이 겹치면 좋음)   축: 빨강 X(앞) 초록 Y(왼쪽) 파랑 Z(위)",
+         ("ⓘ ● 클릭한 점  ○ 계산 결과로 다시 그린 점 (둘이 겹치면 좋음)   축: " +
+          ("빨강 X(앞) 초록 Y(왼쪽) 파랑 Z(위)" if N_POINTS == 5 else "빨강 X(로봇의 오른쪽) 초록 Y(로봇의 앞) 파랑 Z(위)"),
           "dot: clicked  ring: reprojected  red X(fwd) green Y(left) blue Z(up)", GRAY)]
     # 1. 원점 (원점을 찍지 않는 배치: 꼭짓점 하나를 빼고 맞춘 오차)
     if res.holdout_index is None:
@@ -379,7 +380,7 @@ def save_all(cfg_dir, res, rgb, depth, rgb_size, configs, layout):
     write_cam2base(cfg_dir / "cam2base.yaml", res, configs["camera"], session_file=str(rel), created=created,
                    camera_identity=ident)
     log(f"[저장] {cfg_dir.name}/cam2base.yaml  (R, t, 날짜, depth 모드, 검사 결과, 카메라 신원)")
-    log(f"[저장] {rel}  (RGB, depth, 클릭 5점)")
+    log(f"[저장] {rel}  (RGB, depth, 클릭 {N_POINTS}점)")
     rc = int(layout["recheck_corner"])
     p = layout["corners"][rc - 1]
     log(f"[안내] 재점검용 표시: 꼭짓점 {rc}번 자리에 테이프를 붙이세요. base 좌표 ({p[0]:.3f}, {p[1]:.3f}, {p[2]:.3f}) m")
