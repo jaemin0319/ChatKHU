@@ -51,7 +51,12 @@ def load_live_calib(cfg_dir: Path, cfg) -> Calib:
     """<config-dir>/cam2base.yaml. 없으면 MissingCalibration (예시 파일로 대체하지 않는다)."""
     path = (cfg_dir / "cam2base.yaml").resolve()
     conv = require_cam2base(path)
-    return Calib(conv, "cam2base", path, str(conv.info.get("created")), cfg["a4_layout"])
+    layout = cfg["a4_layout"]
+    sess = conv.info.get("session_file")
+    if sess and (cfg_dir.parent / sess).exists():        # the layout the calibration was made with (one / two sheets)
+        from pac_vision.session import load_session
+        layout = load_session(cfg_dir.parent / sess)["configs"]["a4_layout"]
+    return Calib(conv, "cam2base", path, str(conv.info.get("created")), layout)
 
 
 def load_session_calib(session_path: Path) -> tuple[Calib, dict]:
@@ -179,7 +184,9 @@ def overlay(rgb, calib: Calib, rgb_size, axis_len, grid, points):
     conv = calib.conv
     if grid:
         _ui.polylines(vis, grid, GRAY, 1)
-    poly = conv.base_to_pixel(np.array(calib.layout["corners"], float), rgb_size=rgb_size)
+    corners = np.array(calib.layout["corners"], float)
+    corners = corners[[int(i) - 1 for i in calib.layout.get("cycle", range(1, len(corners) + 1))]]   # edge order
+    poly = conv.base_to_pixel(corners, rgb_size=rgb_size)
     if np.all(np.isfinite(poly)):
         cv2.polylines(vis, [np.round(poly).astype(np.int32)], True, OUTLINE, 2, cv2.LINE_AA)
     _ui.base_axes(vis, conv, axis_len, rgb_size)
