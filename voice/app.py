@@ -54,8 +54,8 @@ async def run(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     if args.prompt:
         cfg.prompt_path = args.prompt.resolve()
-    elif args.sim is not None:  # 시뮬레이터용 지시문 (수정 모드, 손가락 수정, 수정 완료 = 검증 후 자동 이동)
-        cfg.prompt_path = (Path(__file__).parent / 'prompts' / 'system_v6.md').resolve()
+    elif args.sim is not None:  # 시뮬레이터용 지시문 (수정 모드, 손가락 수정, 수정 완료 → "검증 후 이동할까요?" → 어)
+        cfg.prompt_path = (Path(__file__).parent / 'prompts' / 'system_v7.md').resolve()
     if args.mic:
         cfg.mic = args.mic
     old = old_voice_processes()

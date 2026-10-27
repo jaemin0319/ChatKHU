@@ -1,8 +1,10 @@
 """AI 없이 쿠옹이 함수를 직접 불러 시뮬레이터 흐름을 시험한다 (API 키·마이크가 없을 때의 대체 시연).
 
-  python -m voice.sim_dryrun                    한 줄에 함수 하나 (예: start_edit, finish_edit, undo_edit, stop_motion,
-                                                move_region region=middle direction=up amount=small). q로 끝
-  python -m voice.sim_dryrun --script "1:start_edit, 6:undo_edit, 3:finish_edit, 25:"
+  python -m voice.sim_dryrun                    한 줄에 함수 하나 (예: start_edit, finish_edit, validate_and_move,
+                                                undo_edit, stop_motion, move_region region=middle direction=up
+                                                amount=small). q로 끝. finish_edit는 묻기만 하고, 움직이는 것은
+                                                그 답인 validate_and_move다
+  python -m voice.sim_dryrun --script "1:start_edit, 6:undo_edit, 3:finish_edit, 2:validate_and_move, 25:"
                                                 "초:함수 인자..." 를 차례로 (초 = 앞 항목 뒤 기다리는 시간)
 
 AI가 함수를 고른 뒤의 길(voice/sim_link.SimEditor.handle)을 그대로 지나므로, 시뮬레이터의 상태 변화와 쿠옹이가 말할

@@ -1,7 +1,7 @@
 """시뮬레이터 이벤트 → 쿠옹이가 말할 문장, 수정 모드 안내 (AI 없이)."""
 from voice import tools
-from voice.sim_link import (ASK_ARRIVED, BACK_TO_EDIT, MOVE_START, PASSED_MOVE, PASSED_WAIT, _announcement,
-                            edit_guide)
+from voice.sim_link import (ASK_ARRIVED, ASK_RUN, BACK_TO_EDIT, EDIT_GUIDE, MOVE_START, PASSED_MOVE, PASSED_WAIT,
+                            QUESTION_FUNCTIONS, _announcement)
 
 
 def ev(kind, state='GENERATED', actor='sim', data=None, **status):
@@ -31,26 +31,21 @@ def test_arrival_back_to_edit_and_cancelled_booking():
     assert '자동 이동 예약이 취소' in _announcement(ev('auto_run_cancelled', data={'reason': 'voice link lost'}))
 
 
-def test_calibration_and_hand_refusals_are_spoken():
+def test_calibration_is_spoken_hand_refusals_only_on_screen():
     assert '다시 보정' in _announcement(ev('calib', data={'calib': 'moved'}))
     assert _announcement(ev('calib', data={'calib': 'verified'})) == ''
-    assert '경로 수정할래' in _announcement(ev('hand_refused', data={'reason': 'not_edit_mode'}))
-    assert '취소' in _announcement(ev('hand_refused', data={'reason': 'depth_lost'}))
+    for reason in ('not_edit_mode', 'calib_unverified', 'no_depth', 'depth_lost', 'rgb_depth_out_of_sync'):
+        assert _announcement(ev('hand_refused', data={'reason': reason})) == ''   # 시뮬레이터 화면에만 보인다
 
 
-def test_edit_guide_matches_what_the_user_can_use():
-    assert edit_guide({'hand': '3d', 'calib': 'verified'}).startswith('네. 손가락으로 경로를 수정해 주세요.')
-    t = edit_guide({'hand': '3d', 'calib': 'moved'})
-    assert '3D 수정은 쓸 수 없어요' in t and '마우스' in t
-    assert '높이만' in edit_guide({'hand': '2d'})
-    assert '클릭' in edit_guide({})
-    for g in (edit_guide({'hand': '3d', 'calib': 'verified'}), edit_guide({})):
-        assert '수정 완료' in g and '이전으로' in g                         # 지금 할 수 있는 말도 알려 준다
+def test_edit_guide_is_one_sentence_about_finishing():
+    assert EDIT_GUIDE == '경로 수정 후 수정 완료를 말해 주세요.'
 
 
-def test_declarations_offer_start_edit_and_no_second_approval():
+def test_finish_asks_first_and_only_yes_validates_and_moves():
     names = {d['name'] for d in tools.DECLARATIONS}
-    assert 'start_edit' in names and 'finish_edit' in names
-    assert not names & {'approve_move', 'keep_editing'}
-    finish = next(d for d in tools.DECLARATIONS if d['name'] == 'finish_edit')
-    assert '이 경로로 할게' in finish['description']
+    assert {'start_edit', 'finish_edit', 'validate_and_move'} <= names
+    decl = {d['name']: d['description'] for d in tools.DECLARATIONS}
+    assert '이 경로로 할게' in decl['finish_edit'] and '검증 후 이동할까요' in decl['finish_edit']
+    assert '검증 후 이동할까요' in decl['validate_and_move'] and '"어"' in decl['validate_and_move']
+    assert ASK_RUN == '검증 후 이동할까요?' and QUESTION_FUNCTIONS[ASK_RUN] == {'validate_and_move'}

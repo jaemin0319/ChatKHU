@@ -5,18 +5,21 @@
 
 - 함수 → 시뮬레이터 명령
   start_edit  → start_edit : 시뮬레이터의 수정 모드를 실제로 켠다(손 입력은 수정 모드에서만 된다). 켜졌다는 결과가
-                와야만 안내 문장(say)을 돌려준다. 검증 중이면 검증을 취소하고, 목표에 도착한 뒤면 돌아오는 길을 고친다
+                와야만 안내 문장(say: EDIT_GUIDE)을 돌려준다. 검증 중이면 검증을 취소하고, 목표에 도착한 뒤면 돌아오는 길을 고친다
   move_here   → move_point(target="here")  : 사용자가 시뮬레이터 화면에서 가리킨(클릭·검지) 점
   move_region → move_point(target=start|middle|end) (whole은 아직 지원하지 않음)
   adjust_amount → undo_last_edit + move_point(한 단계 큰/작은 양) : "조금만 더" / "좀 덜"
   undo_edit   → undo_last_edit ("이전으로": 손·마우스·말 수정이 모두 같은 되돌리기 기록), reset_edit → reset_to_original
-  finish_edit → use_current_path(auto_run) : 검증하고, 통과하면 묻지 않고 그 경로로 바로 움직인다(시뮬레이터 전용).
-                예약은 그 검증·그 경로 버전에만 묶인다(시뮬레이터 Session.auto_run): 그 사이 편집·수정 모드·X·연결 끊김·
-                실패면 취소된다. 결정한 뒤 경로가 바뀌었으면(STALE_REVISION) 다시 보내지 않고 path_changed로 돌려준다
+  finish_edit → (시뮬레이터 명령 없음) 앱이 "검증 후 이동할까요?"(ASK_RUN)라고 묻는다. 답은 호출어 없이 한 번 받는다
+  validate_and_move → use_current_path(auto_run) : 그 질문에 "어/응/네"라고 답하면 검증하고, 통과하면 그 경로로 바로
+                움직인다(시뮬레이터 전용). 예약은 그 검증·그 경로 버전에만 묶인다(시뮬레이터 Session.auto_run): 그 사이
+                편집·수정 모드·X·연결 끊김·실패면 취소된다. 결정한 뒤 경로가 바뀌었으면(STALE_REVISION) 다시 보내지 않고
+                path_changed로 돌려준다
   stop_motion → stop (말이 들리자마자 세션이 stop_now로 먼저 멈춘다), continue_motion → resume(forward)
   go_back → 멈춘 뒤면 resume(back), 목표에 도착한 뒤면 return_reverse (가던 길을 거꾸로, 검증 후 자동 이동)
   edit_return_path → edit_return, new_target → new_target, save_paths → save_paths
 - 손(마우스 끌기, 핀치)으로 고치면 "경로를 수정했어요."라고 알리고, 열린 호출어 창을 다시 채운다(on_activity).
+  손 입력이 거절된 이유(수정 모드 아님, 깊이 없음 등)는 말하지 않는다: 시뮬레이터 화면(알림 줄, 손가락 옆)에만 보인다.
 - 두 단계: 가는 길을 고쳐 목표까지 간 뒤, 돌아오는 길을 고치거나 가던 길을 거꾸로 돌아온다.
 - 멈춘 뒤 STOP_ASK_S 동안 계속/돌아가기 명령이 없으면 "계속 갈까요, 돌아갈까요?"를 묻는다.
 - 검증·실행 결과는 나중에 이벤트로 오므로 알림 큐(announcements)에 한국어 문장으로 넣는다.
@@ -43,32 +46,26 @@ REQUEST_DEADLINE_S = 4.0
 HELLO_TIMEOUT_S = 3.0
 STOP_ASK_S = 5.0          # 멈춘 뒤 이 시간 동안 명령이 없으면 계속 갈지 돌아갈지 묻는다
 STOP_RECENT_S = 10.0      # 즉시 정지 뒤 AI가 부른 stop_motion은 "멈췄음"으로 답한다
-HAND_NOTICE_S = 8.0       # 같은 손 거절 이유는 이 시간 안에 다시 말하지 않는다
 ASK_STOPPED = '계속 갈까요, 돌아갈까요?'
 ASK_RETURN = '돌아오는 길을 수정할까요, 가던 길 그대로 반대로 돌아갈까요?'
 ASK_ARRIVED = '목표에 도착했어요. ' + ASK_RETURN
 ASK_HOME = '처음 자리로 돌아왔어요. 새 목표로 다시 해 볼까요?'
+ASK_RUN = '검증 후 이동할까요?'
 # 앱의 질문 → 답이 될 수 있는 함수 (호출어 없이 받는 것은 이 함수들뿐이다. 멈춤은 언제나 된다)
 QUESTION_FUNCTIONS = {
     ASK_STOPPED: frozenset({'continue_motion', 'go_back'}),
     ASK_RETURN: frozenset({'edit_return_path', 'start_edit', 'go_back'}),
     ASK_ARRIVED: frozenset({'edit_return_path', 'start_edit', 'go_back'}),
     ASK_HOME: frozenset({'new_target', 'save_paths'}),
+    ASK_RUN: frozenset({'validate_and_move'}),
 }
+EDIT_GUIDE = '경로 수정 후 수정 완료를 말해 주세요.'   # 수정 모드가 실제로 켜진 뒤 (가는 길·돌아오는 길 모두)
 MOVE_START = '이동을 시작할게요.'
 PASSED_MOVE = '검증을 통과했어요. 이동을 시작할게요.'
 PASSED_WAIT = '검증을 통과했어요. Y 버튼을 누르면 이동해요.'
 BACK_TO_EDIT = '시작한 자리로 돌아왔어요. 경로를 더 고치거나 수정 완료라고 말씀해 주세요.'
 HAND_EDITED = '경로를 수정했어요.'
 HAND_EDIT_QUIET_S = 1.0   # 손(마우스·핀치)으로 고친 뒤 이 시간 동안 또 고치지 않으면 한 번만 알린다
-HAND_REFUSED = {
-    'not_edit_mode': '손으로 고치려면 먼저 쿠옹아, 경로 수정할래라고 말씀해 주세요.',
-    'calib_unverified': '카메라 정합이 확인되지 않아 손가락 3D 수정은 쓸 수 없어요. 마우스로 고쳐 주세요.',
-    'no_depth': '손가락 깊이를 못 읽었어요. 손을 카메라에서 조금 떨어뜨려 주세요.',
-    'rgb_depth_out_of_sync': '손가락 깊이를 제때 못 받았어요. 다시 집어 주세요.',
-    'depth_stream_stopped': '깊이 카메라가 멈췄어요.',
-    'depth_lost': '깊이가 끊겨서 방금 수정을 취소했어요.',
-}
 CALIB_NOTICE = {
     'moved': '카메라가 움직인 것 같아요. 다시 보정하기 전에는 손가락 3D 수정을 쓸 수 없어요. 마우스로는 고칠 수 있어요.',
     'not_visible': '기준 표지가 안 보여서 카메라 정합을 확인할 수 없어요. 손가락 3D 수정을 잠시 쓸 수 없어요.',
@@ -93,20 +90,6 @@ class SimLinkError(RuntimeError):
     pass
 
 
-def edit_guide(status: dict) -> str:
-    """수정 모드가 실제로 켜진 뒤 말할 안내: 지금 쓸 수 있는 입력에 맞춘다 (시뮬레이터 status의 hand, calib)."""
-    hand, calib = status.get('hand') or '', status.get('calib') or ''
-    tail = ' 다 고치면 이 경로로 할게, 또는 수정 완료라고 말씀해 주세요. 되돌리려면 이전으로라고 하세요.'
-    if hand == '3d' and calib == 'verified':
-        return '네. 손가락으로 경로를 수정해 주세요. 검지로 고칠 점을 가리키고, 엄지와 검지로 집어서 옮기세요.' + tail
-    if hand == '3d':
-        return ('네. 수정 모드예요. 다만 카메라 정합이 확인되지 않아 손가락 3D 수정은 쓸 수 없어요. '
-                '화면에서 점을 클릭해 마우스나 말로 고쳐 주세요.' + tail)
-    if hand == '2d':
-        return '네. 손가락으로 경로를 수정해 주세요. 검지로 점을 가리키고, 집어서 위아래로 옮기세요. 높이만 바뀌어요.' + tail
-    return '네. 수정 모드예요. 화면에서 고칠 점을 클릭하고 마우스로 끌거나 말로 옮겨 주세요.' + tail
-
-
 class SimEditor:
     fail_mode = False   # 세션·기록이 읽는 값. 시뮬레이터 연결에서는 쓰지 않는다
 
@@ -126,7 +109,6 @@ class SimEditor:
         self._stopped_at = 0.0
         self._stop_seq = 0        # 멈춤마다 +1, 계속/돌아가기 명령마다 +1 (5초 질문 취소)
         self._hand_timer: threading.Timer | None = None
-        self._hand_said: dict[str, float] = {}
         self.on_activity: Callable[[], None] | None = None   # 손으로 고쳤을 때 (세션이 호출어 창을 다시 채운다)
         self.connected = True
         self.refused = ''
@@ -283,6 +265,8 @@ class SimEditor:
             return self._start_edit()
         if name == 'finish_edit':
             return self._finish()
+        if name == 'validate_and_move':
+            return self._validate_and_move()
         if name == 'save_paths':
             res = self._command('save_paths')
             if not res.get('accepted'):
@@ -302,10 +286,23 @@ class SimEditor:
         st = res.get('status') or {}
         if not st.get('edit_mode'):
             return {'status': 'failed', 'reason': 'not_editable'}
-        return {'status': 'applied', 'edit_mode': True, 'path': st.get('phase') or 'outbound', 'say': edit_guide(st)}
+        return {'status': 'applied', 'edit_mode': True, 'path': st.get('phase') or 'outbound', 'say': EDIT_GUIDE}
 
     def _finish(self) -> dict[str, Any]:
-        """"이 경로로 할게 / 수정 완료": 지금 경로를 검증하고, 통과하면 묻지 않고 그 경로로 움직인다 (시뮬레이터 전용)."""
+        """"수정 완료 / 이 경로로 할게": 바로 움직이지 않는다. 앱이 "검증 후 이동할까요?"라고 묻고, 그렇다는 답이
+        validate_and_move다. 지금 검증할 수 없는 상태(이동·검증 중, 도착, 멈춤, 실패한 그 경로)면 묻지 않고 이유를 준다."""
+        if self._hand_timer is not None:
+            self._hand_timer.cancel()          # 방금 손 수정의 "경로를 수정했어요."는 질문과 겹쳐 늦게 말하지 않는다
+        state = self.status.get('state')
+        if state == 'FAILED':                  # 실패한 뒤 고치지 않은 그 경로 (고치면 상태가 바뀐다)
+            return {'status': 'failed', 'reason': 'path_failed'}
+        if state in ('EXECUTING', 'VALIDATING', 'DONE', 'ABORTED'):
+            return self._refusal({'reason_code': 'NOT_ALLOWED', 'status': self.status})
+        self.announcements.put(ASK_RUN)
+        return {'status': 'asking'}
+
+    def _validate_and_move(self) -> dict[str, Any]:
+        """"검증 후 이동할까요?"에 "어": 지금 경로를 검증하고, 통과하면 그 경로로 바로 움직인다 (시뮬레이터 전용)."""
         if self._hand_timer is not None:
             self._hand_timer.cancel()          # 방금 손 수정의 "경로를 수정했어요."는 검증 중에 늦게 말하지 않는다
         res = self._command('use_current_path', auto_run=True)
@@ -340,7 +337,7 @@ class SimEditor:
         if not res.get('accepted'):
             return self._refusal(res)
         if name == 'edit_return_path':
-            return {'status': 'applied', 'next': 'edit_return', 'say': edit_guide(res.get('status') or self.status)}
+            return {'status': 'applied', 'next': 'edit_return', 'say': EDIT_GUIDE}
         return {'status': 'applied', 'next': 'edit_outbound'}
 
     def _adjust(self, change) -> dict[str, Any]:
@@ -386,14 +383,7 @@ class SimEditor:
 
     # ------------------------------------------------------------------ 알림
     def _announcement(self, ev: dict) -> str:
-        text = _announcement(ev)
-        if ev.get('kind') == 'hand_refused':                 # 같은 이유는 잠시 동안 한 번만 말한다
-            reason = (ev.get('data') or {}).get('reason', '')
-            now = time.time()
-            if not text or now - self._hand_said.get(reason, -1e9) < HAND_NOTICE_S:
-                return ''
-            self._hand_said[reason] = now
-        return text
+        return _announcement(ev)
 
 
 def _fail_place(status: dict) -> str:
@@ -442,7 +432,7 @@ def _announcement(ev: dict) -> str:
     if kind == 'calib':
         return CALIB_NOTICE.get(data.get('calib', ''), '')
     if kind == 'hand_refused':
-        return HAND_REFUSED.get(data.get('reason', ''), '')
+        return ''   # 손 입력 거절 이유는 시뮬레이터 화면(알림 줄, 손가락 옆)에만 보인다 (말하지 않는다)
     if kind == 'point_select' and actor == 'mouse':
         return ''   # 클릭은 화면 표시로 충분하다 (말하지 않는다)
     return ''

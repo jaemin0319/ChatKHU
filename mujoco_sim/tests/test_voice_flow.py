@@ -1,9 +1,9 @@
 """The voice side (voice/sim_link.SimEditor) against the real gateway and Session, without the AI.
 
 What 쿠옹이's functions do in the simulator and what it is told to say: "경로 수정할래" really turns edit mode on,
-hand edits and voice undo share one history, "수정 완료" validates and - only if that path passes - runs it without
-another question, a failure stays visible and returns to edit mode, a booking dies with an edit, a second voice
-client is refused, a stale "수정 완료" is not re-sent. The Session is only touched from one "main loop" thread.
+hand edits and voice undo share one history, "수정 완료" asks "검증 후 이동할까요?" and the yes (validate_and_move)
+validates and - only if that path passes - runs it, a failure stays visible and returns to edit mode, a booking dies
+with an edit, a second voice client is refused, a stale yes is not re-sent. The Session is only touched from one "main loop" thread.
 """
 import os
 import queue
@@ -117,13 +117,13 @@ def _said(ed, timeout=5.0):
     return out
 
 
-def test_edit_mode_hand_edit_voice_undo_and_finish_runs_without_asking(link):
+def test_edit_mode_hand_edit_voice_undo_finish_asks_and_yes_runs(link):
     s, d, gw, loop, ed = link
     loop.call(lambda: (setattr(s, "hand_mode", "3d"), setattr(s, "calib_state", "verified")))
     fp0 = loop.call(lambda: s.path.fingerprint)
     assert not loop.call(lambda: s.edit_mode)
     r = ed.handle("start_edit", {})                                         # "쿠옹아, 경로 수정할래"
-    assert r["status"] == "applied" and r["say"].startswith("네. 손가락으로 경로를 수정해 주세요.")
+    assert r["status"] == "applied" and r["say"] == sim_link.EDIT_GUIDE
     assert loop.call(lambda: s.edit_mode)                                    # the simulator really is in edit mode
     loop.call(_hand_drag(s, 0.03))                                           # a pinch edit (same Session)
     assert sim_link.HAND_EDITED in _said(ed, 2.0)
@@ -132,11 +132,15 @@ def test_edit_mode_hand_edit_voice_undo_and_finish_runs_without_asking(link):
     assert loop.call(lambda: s.path.fingerprint) == fp0
     loop.call(_hand_drag(s, 0.03))
     _synced(loop, s, ed)
-    r = ed.handle("finish_edit", {})                                         # "이 경로로 할게"
+    r = ed.handle("finish_edit", {})                                         # "수정 완료"
+    assert r == {"status": "asking"}
+    assert sim_link.ASK_RUN in _said(ed, 1.0)                                 # "검증 후 이동할까요?"
+    assert loop.call(lambda: s.state not in ("VALIDATING", "EXECUTING"))      # nothing runs before the answer
+    r = ed.handle("validate_and_move", {})                                   # "어"
     assert r == {"status": "validating", "next": "moves_if_passed"}
     assert loop.wait(lambda: s.state == "DONE")
     said = _said(ed, 1.5)
-    assert sim_link.PASSED_MOVE in said and sim_link.ASK_ARRIVED in said     # no "이동할까요?" in between
+    assert sim_link.PASSED_MOVE in said and sim_link.ASK_ARRIVED in said     # no second question after the yes
     assert not any("이동할까요" in t for t in said)
     run = loop.call(lambda: s.last_run)
     assert run["status"] == "DONE" and run["path_source"] == "edited"
@@ -148,7 +152,8 @@ def test_a_failed_path_stays_visible_and_returns_to_edit_mode(link):
     k = loop.call(lambda: s.path.waypoint_index[1] - 3)                      # near the target, low already
     loop.call(_hand_drag(s, -0.15, k=k))                                     # pushed below the desk
     _synced(loop, s, ed)
-    r = ed.handle("finish_edit", {})
+    assert ed.handle("finish_edit", {})["status"] == "asking"
+    r = ed.handle("validate_and_move", {})
     assert r["status"] == "validating"
     assert loop.wait(lambda: s.state == "FAILED")
     said = " ".join(_said(ed, 1.5))
@@ -159,7 +164,9 @@ def test_a_failed_path_stays_visible_and_returns_to_edit_mode(link):
     loop.call(lambda: s.point_select(s.path.waypoint_index[1] // 3))         # a later event (a click) ...
     ov = loop.call(lambda: build_overlay(s, d))
     assert ov.failures                                                       # ... does not hide the red points
-    assert ed.handle("finish_edit", {})["reason"] == "path_failed"           # the same path is not run
+    _synced(loop, s, ed)
+    assert ed.handle("finish_edit", {}) == {"status": "failed", "reason": "path_failed"}   # not asked again
+    assert ed.handle("validate_and_move", {})["reason"] == "path_failed"    # the same path is not run
 
 
 @pytest.mark.parametrize("link", [True], indirect=True)
@@ -168,7 +175,7 @@ def test_saying_edit_during_validation_drops_the_booking(link):
     s, d, gw, loop, ed = link
     loop.call(_hand_drag(s, 0.03))
     _synced(loop, s, ed)
-    assert ed.handle("finish_edit", {})["status"] == "validating"
+    assert ed.handle("validate_and_move", {})["status"] == "validating"
     assert loop.call(lambda: s.state == "VALIDATING" and s.auto_run is not None)
     _synced(loop, s, ed)
     r = ed.handle("start_edit", {})
@@ -181,7 +188,7 @@ def test_saying_edit_during_validation_drops_the_booking(link):
 def test_a_stale_finish_is_not_resent(link):
     s, d, gw, loop, ed = link
     ed.rev -= 1                                                              # decided before a change it did not see
-    assert ed.handle("finish_edit", {}) == {"status": "failed", "reason": "path_changed"}
+    assert ed.handle("validate_and_move", {}) == {"status": "failed", "reason": "path_changed"}
     assert loop.call(lambda: s.state) == "GENERATED"
 
 
