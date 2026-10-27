@@ -13,8 +13,8 @@
  "urdf/materials.xacro": "9caa339ffa0a6814317922f8472faafaa9474684e94988f7137d94043813ca67",
  "meshes/link_1_engraved.stl": "552401b905066416c99ddc7352defdeef4910dd401880418041b7751b34cf581",
  "meshes/link_1_engraving.stl": "3b7e0fb56a458c56723680dbbf306e715d24ebe0e287b1b0a0e1b260d71d777a",
- "meshes/link__1__1_engraved.stl": "79f716e74880b95a23a107f08871bb7bad4e7128e07cdd0221c8a6920ce67e48",
+ "meshes/link__1__1_engraved.stl": "a615bef98ca300a7595d85d22f6b6685b6a232d7288a128c9c40a9e6e30474f4",
  "meshes/link__1__1_engraving.stl": "0d26337f471326a10506ca91d0ba3366636e4ea65378ada001967aee0a1ec9c8",
  "meshes/link_1_ring.stl": "2c1cfb495015e4a3acb433a501b0c7d67bb133322022d682a7686b4f3d360a86",
- "meshes/link__1__1_ring.stl": "2f94c2af92fca55232a4b16335ace9789a1fcd0db8b2c002ece71622b2297ce9"
+ "meshes/link__1__1_ring.stl": "273d4a2ade2adec3dffb57182eabe2ab6d57180958da1e341010d51b02d96e86"
 }
