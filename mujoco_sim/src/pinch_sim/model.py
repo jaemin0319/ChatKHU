@@ -59,7 +59,7 @@ class RobotIndex:
     lo: np.ndarray
     hi: np.ndarray
     tcp_site: int
-    floor_geom: int               # robot support surface: desk_top (or the floor plane without a desk)
+    support_geoms: np.ndarray     # surfaces under the robot: desk_top (or the floor plane) and base_plate if any
     robot_geoms: np.ndarray       # collision geoms (contype/conaffinity != 0) on moving bodies
     base_geom: int                # collision geom of the fixed base mesh (world body)
     ctrl_lo: np.ndarray
@@ -75,6 +75,7 @@ class RobotIndex:
         # the surface the robot stands on (z = 0): the desk top if the scene has a desk, else the floor plane
         names = {m.geom(g).name for g in range(m.ngeom)}
         floor = m.geom("desk_top").id if "desk_top" in names else m.geom("floor").id
+        support = [floor] + ([m.geom("base_plate").id] if "base_plate" in names else [])
         moving = lambda g: m.body_weldid[m.geom_bodyid[g]] != 0          # noqa: E731 (desk/world are static)
         robot = [g for g in collide if moving(g)]
         base = [g for g in collide if m.geom_bodyid[g] == 0 and m.geom_type[g] != mujoco.mjtGeom.mjGEOM_PLANE]
@@ -87,7 +88,7 @@ class RobotIndex:
             lo=m.jnt_range[jid, 0].copy(),
             hi=m.jnt_range[jid, 1].copy(),
             tcp_site=m.site(TCP_SITE).id,
-            floor_geom=floor,
+            support_geoms=np.array(support),
             robot_geoms=np.array(robot),
             base_geom=base[0],
             ctrl_lo=m.actuator_ctrlrange[act, 0].copy(),

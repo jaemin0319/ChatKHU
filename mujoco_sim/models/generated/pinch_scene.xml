@@ -40,13 +40,13 @@
   </asset>
 
   <worldbody>
-    <geom quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.7 0.7 0.7 1" density="0" mesh="base_link"/>
-    <geom quat="1 0 0 0" type="mesh" rgba="0.7 0.7 0.7 1" mesh="base_link"/>
+    <geom pos="0 0 0.02" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.7 0.7 0.7 1" density="0" mesh="base_link"/>
+    <geom pos="0 0 0.02" quat="1 0 0 0" type="mesh" rgba="0.7 0.7 0.7 1" mesh="base_link"/>
     <geom name="floor" size="0 0 0.05" pos="0 0 -0.75" type="plane" material="groundplane"/>
     <camera name="side_cam" quat="0.346191 0.242405 0.519836 0.742403" pos="0.3 0.5 0.3" fovy="60"/>
     <camera name="side_cam_alt" quat="0.586183 0.383797 0.390839 0.596937" pos="0.55 0.25 0.3" fovy="60"/>
     <light pos="0 0 1.5" type="directional"/>
-    <body name="r_a_1" pos="0 0.002984 0.043554">
+    <body name="r_a_1" pos="0 0.002984 0.063554">
       <inertial pos="0.0104256 0.000992663 0.0386486" quat="0.93748 -0.0205562 0.347421 0.00276457" mass="0.176938" diaginertia="0.000246766 0.000235056 0.000200178"/>
       <joint name="Revolute_1" range="-3.14159 3.14159" actuatorfrcrange="-10 10"/>
       <geom pos="0 -0.002984 -0.041554" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.7 0.7 0.7 1" density="0" mesh="r_a_1"/>
@@ -88,6 +88,9 @@
           </body>
         </body>
       </body>
+    </body>
+    <body name="base_plate">
+      <geom name="base_plate" size="0.09 0.09 0.01" pos="0 0.002984 0.01" type="box"/>
     </body>
     <body name="desk">
       <geom name="desk_top" size="0.6 0.35 0.015" pos="0 0.15 -0.015" type="box" material="desk_wood"/>

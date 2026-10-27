@@ -27,15 +27,18 @@ def _tcp_local():
 def independent_fk(q, tcp_local=None, tool_local=None):
     """FK straight from the ORIGINAL 6dof_control.xml body pos / joint axis (no MuJoCo).
 
-    The TCP offset in body housing_1 comes from configs/demo.json (gripper tip, or the old flange face).
+    The TCP offset in body housing_1 comes from configs/demo.json (gripper tip, or the old flange face); the base
+    stands mount.height_m above the table (z = 0) when the robot is on its plate.
     """
     if tcp_local is None:
         tcp_local, tool_local = _tcp_local()
     from pinch_sim.model import load_config
-    src = (ROOT / load_config()["model"]["source_scene"]).parent / "6dof_control.xml"
+    cfg = load_config()
+    src = (ROOT / cfg["model"]["source_scene"]).parent / "6dof_control.xml"
     root = ET.parse(src).getroot()
     body = root.find("worldbody")
-    R, p = np.eye(3), np.zeros(3)
+    mount = cfg.get("mount", {})
+    R, p = np.eye(3), np.array([0.0, 0.0, mount["height_m"] if mount.get("enabled") else 0.0])
     for i in range(6):
         body = body.find("body")
         j = body.find("joint")
@@ -110,3 +113,35 @@ def test_side_cam_looks_at_workspace(scene, data, cfg):
     assert np.allclose(data.cam_xpos[c], cfg["cameras"]["side_cam"]["pos_m"])
     q = look_at_quat([0, 0, 1], [0, 0, 0], up=(0, 1, 0))
     assert np.isfinite(q).all()
+
+
+def test_robot_stands_on_the_plate(scene, cfg):
+    """mount: base bottom at z = height (table z = 0), plate 180 x 180 x 20 mm grey around the J1 axis; the plate
+    collides with the arm (and is a floor-clearance surface), not with the base."""
+    from pinch_sim.collision import CollisionChecker
+    m, idx, _ = scene
+    mc = cfg["mount"]
+    assert mc["enabled"] and mc["height_m"] == 0.02 and mc["plate_size_m"] == [0.18, 0.18]
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    g = idx.base_geom
+    v = m.mesh_vert[m.mesh_vertadr[m.geom_dataid[g]]:][:m.mesh_vertnum[m.geom_dataid[g]]]
+    z = (d.geom_xpos[g] + v @ d.geom_xmat[g].reshape(3, 3).T)[:, 2]
+    assert abs(z.min() - 0.02) < 1e-3                                       # base bottom on the plate top
+    plate = m.geom("base_plate")
+    j1 = d.xanchor[m.joint("Revolute_1").id]
+    assert np.allclose(plate.size, [0.09, 0.09, 0.01]) and np.allclose(d.geom_xpos[plate.id], [j1[0], j1[1], 0.01])
+    assert np.allclose(plate.rgba, mc["plate_rgba"]) and m.body_weldid[plate.bodyid[0]] == 0
+    assert plate.contype and plate.conaffinity and plate.id in idx.support_geoms
+    assert m.geom("desk_top").id in idx.support_geoms
+    assert np.isclose(m.geom("desk_top").size[2] + d.geom_xpos[m.geom("desk_top").id][2], 0.0)   # table top z = 0
+    # straight up: no contact; the lowest moving part (r_a_1, on the base) is nearer the plate than the desk,
+    # and the floor clearance is that plate distance (20 mm less than to the desk)
+    r = CollisionChecker(m, idx).check(np.zeros(6))
+    d.qpos[idx.qpos] = 0.0
+    mujoco.mj_fwdPosition(m, d)
+    g = [x for x in idx.robot_geoms if m.body(m.geom_bodyid[x]).name == "r_a_1"][0]
+    to_plate = mujoco.mj_geomDistance(m, d, int(g), plate.id, 0.2, None)
+    to_desk = mujoco.mj_geomDistance(m, d, int(g), m.geom("desk_top").id, 0.2, None)
+    assert not r.contacts and r.floor_geom_body == "r_a_1"
+    assert np.isclose(r.floor_clearance_m, to_plate) and np.isclose(to_desk - to_plate, 0.02, atol=1e-6)

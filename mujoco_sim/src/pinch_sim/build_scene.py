@@ -10,6 +10,8 @@ Every addition is made here, explicitly, with MjSpec:
   * exclude world<->r_a_1 (bodies joined by Revolute_1, permanently overlapping in the CAD meshes; see docs/FRAMES.md)
   * desk (cfg.desk): wooden desk body with its top surface at z = 0 and the grey floor plane lowered under
     it (scene_env.py); no extra contact exclusion
+  * mount (cfg.mount): the robot raised by mount.height_m onto a grey plate centred on the J1 axis; the table
+    stays at z = 0 (scene_env.add_mount)
   * keyframe `ready`: ready.q_rad if given (checked against ready.tcp_m / tool_axis), otherwise
     solved by IK for ready.tcp_m with the tool pointing down
     (joints listed in ready.lock_joints_rad are held at the given value during that IK)
@@ -30,17 +32,20 @@ from . import gripper as grip
 from .collision import CollisionChecker
 from .frames import look_at_quat, zaxis_quat
 from .kinematics import Kinematics
-from .scene_env import add_desk_and_floor, relativize_texture
+from .scene_env import add_desk_and_floor, add_mount, relativize_texture
 from .model import JOINTS, ROOT, RobotIndex, file_sha, load_config
 
 
 def make_spec(cfg: dict) -> tuple[mujoco.MjSpec, dict]:
     mc = cfg["model"]
     spec = mujoco.MjSpec.from_file(str(ROOT / mc["source_scene"]))
+    info = {}
+    if cfg.get("mount", {}).get("enabled"):
+        info["mount"] = add_mount(spec, cfg["mount"])
     gcfg = cfg.get("gripper", {})
     if gcfg.get("enabled"):
         meshdir_abs = (ROOT / mc["source_scene"]).parent / spec.meshdir
-        info = {"gripper": grip.apply_to_spec(spec, gcfg, meshdir_abs)}
+        info["gripper"] = grip.apply_to_spec(spec, gcfg, meshdir_abs)
         tcp_pos, tcp_axis = grip.tcp_local(gcfg)
         tcp_body = gcfg["mount_body"]
         tcp_quat = np.asarray(gcfg["mesh_to_body_quat"], float)   # TCP frame = gripper mesh axes (z = tool axis)
@@ -48,7 +53,6 @@ def make_spec(cfg: dict) -> tuple[mujoco.MjSpec, dict]:
         tcp_pos = np.asarray(mc["tcp_local_pos_m"]) + mc["tool_length_m"] * np.asarray(mc["tcp_local_zaxis"])
         tcp_axis, tcp_body = np.asarray(mc["tcp_local_zaxis"], float), mc["tcp_body"]
         tcp_quat = zaxis_quat(tcp_axis)
-        info = {}
     info["tcp"] = (tcp_body, tcp_pos, tcp_axis)
     spec.body(tcp_body).add_site(name="tcp", pos=tcp_pos, quat=tcp_quat,
                                  size=[0.004, 0, 0], rgba=[1, 0.5, 0, 1], group=2)
@@ -125,6 +129,7 @@ def build(cfg: dict | None = None) -> dict:
         "tcp_local_axis": np.round(info["tcp"][2], 6).tolist(),
         "nu": int(m2.nu), "njnt": int(m2.njnt),
         "desk": info.get("desk"),
+        "mount": info.get("mount"),
     }
     if cfg.get("gripper", {}).get("enabled"):
         b = m2.body(cfg["gripper"]["mount_body"]).id

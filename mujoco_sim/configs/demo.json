@@ -40,18 +40,33 @@
     "floor_rgb": [0.50, 0.50, 0.50],
     "floor_rgb2": [0.45, 0.45, 0.45]
   },
+  "mount": {
+    "enabled": true,
+    "height_m": 0.02,
+    "plate_size_m": [
+      0.18,
+      0.18
+    ],
+    "plate_rgba": [
+      0.5,
+      0.5,
+      0.5,
+      1.0
+    ],
+    "_note": "2026-10-28 user: the robot stands on a 180 x 180 x 20 mm grey plate centred on the J1 axis (its front edge on the paper's robot-side edge, its sides on the +-9 cm lines). World z = 0 stays the table top: base_link and the arm are raised by height_m (base bottom at z = 0.02); joint angles, x and y are unchanged (scene_env.add_mount). The plate is a static body: it collides with the arm (and counts in the floor clearance), not with the base."
+  },
   "ready": {
     "tcp_m": [
       0.094294,
       0.100206,
-      0.25
+      0.27
     ],
     "tool_axis": [
       0.0,
       0.0,
       -1.0
     ],
-    "_note": "Home in joint space: Revolute_1 = 0 (J2 axis = world +X), Revolute_6 = -0.139769 (keeps the gripper roll visible); 2026-10-11 lowered 5 cm in z (J2..J5 re-solved with J1, J6 locked). tcp_m = FK of q_rad, checked at build time.",
+    "_note": "Home in joint space: Revolute_1 = 0 (J2 axis = world +X), Revolute_6 = -0.139769 (keeps the gripper roll visible); 2026-10-11 lowered 5 cm in z (J2..J5 re-solved with J1, J6 locked). tcp_m = FK of q_rad, checked at build time. 2026-10-28: the robot stands on the 20 mm plate (mount), same q_rad -> tcp_m z 0.25 -> 0.27 (table frame).",
     "q_rad": [
       0.0,
       0.641283,

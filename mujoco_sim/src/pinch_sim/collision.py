@@ -62,7 +62,8 @@ class CollisionChecker:
                                  float(c.dist)))
         if clearance:
             for g in self.idx.robot_geoms:
-                dist = mujoco.mj_geomDistance(m, d, int(g), self.idx.floor_geom, self.distmax, None)
+                dist = min(mujoco.mj_geomDistance(m, d, int(g), int(s), self.distmax, None)
+                           for s in self.idx.support_geoms)                # desk top and the base plate
                 body = m.body(m.geom_bodyid[g]).name                  # a body may have several collision geoms
                 res.floor_by_body[body] = min(float(dist), res.floor_by_body.get(body, np.inf))
                 if dist < res.floor_clearance_m:

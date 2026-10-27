@@ -1,13 +1,16 @@
-"""Scene environment added by build_scene: a light wooden desk under the robot and a grey floor.
+"""Scene environment added by build_scene: a light wooden desk under the robot, a grey floor and the plate the
+robot stands on.
 
-World frame is unchanged: base_link = world origin, z = 0 is the surface the robot stands on. The desk TOP
-SURFACE is therefore placed at z = 0 and the room floor (the original `floor` plane) is lowered to
-z = -desk.height_m. Robot base, TCP, targets (marker at z = 0 = desk top) and cameras keep their coordinates.
+World frame: z = 0 is the desk top (the table; targets, the camera calibration and the cameras use it). The desk TOP
+SURFACE is placed at z = 0 and the room floor (the original `floor` plane) is lowered to z = -desk.height_m.
+Without a mount the robot's base_link is the world origin. With `mount` (add_mount) the robot stands on a plate:
+base_link and everything above it are raised by mount.height_m (base bottom at z = height_m), the plate fills
+z 0..height_m around the J1 axis, and x, y, the joint angles and the table frame stay as they are.
 
-The desk is its own body without joints (welded to the world): MuJoCo does not collide static bodies with
-each other (base mesh <-> desk top, legs <-> floor), while every robot link <-> desk geom pair is collided
-normally. No contact exclusion is needed. Validation's "floor" clearance is measured to the desk top
-(RobotIndex.floor_geom = `desk_top` when it exists).
+The desk and the plate are their own bodies without joints (welded to the world): MuJoCo does not collide static
+bodies with each other (base mesh <-> plate <-> desk top, legs <-> floor), while every robot link <-> desk / plate
+geom pair is collided normally. No contact exclusion is needed. Validation's "floor" clearance is measured to the
+desk top and the plate (RobotIndex.support_geoms).
 
 The wood texture is generated here (deterministic, low-contrast grain) next to the generated scene.
 """
@@ -87,6 +90,25 @@ def add_desk_and_floor(spec: mujoco.MjSpec, dc: dict, texture_dir: Path) -> dict
                   pos=[cx + ix, cy, za], material="desk_frame")
     return {"desk_top_x_m": [x0, x1], "desk_top_y_m": [y0, y1], "desk_top_z_m": z_top, "floor_z_m": z_floor,
             "texture": DESK_TEXTURE}
+
+
+def add_mount(spec: mujoco.MjSpec, mc: dict) -> dict:
+    """Raise the robot (the world-body base_link geoms and the J1 body r_a_1) by mc.height_m and add the plate under
+    it, centred on the J1 axis. Returns a summary for the build report."""
+    h = float(mc["height_m"])
+    base = [g for g in spec.worldbody.geoms if g.meshname == "base_link"]
+    arm = spec.worldbody.bodies
+    if len(base) != 2 or [b.name for b in arm] != ["r_a_1"]:
+        raise RuntimeError(f"expected 2 base_link geoms and body r_a_1 on the world body, got {len(base)}, "
+                           f"{[b.name for b in arm]}")
+    for el in base + arm:
+        el.pos = [el.pos[0], el.pos[1], el.pos[2] + h]
+    cx, cy = float(arm[0].pos[0]), float(arm[0].pos[1])                  # J1 axis
+    sx, sy = (float(v) for v in mc["plate_size_m"])
+    body = spec.worldbody.add_body(name="base_plate", pos=[0.0, 0.0, 0.0])
+    body.add_geom(name="base_plate", type=mujoco.mjtGeom.mjGEOM_BOX, size=[sx / 2, sy / 2, h / 2],
+                  pos=[cx, cy, h / 2], rgba=mc["plate_rgba"])
+    return {"height_m": h, "plate_size_m": [sx, sy], "plate_centre_m": [cx, cy]}
 
 
 def relativize_texture(xml: str, texture_dir: Path) -> str:
