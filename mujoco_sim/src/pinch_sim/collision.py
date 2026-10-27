@@ -63,7 +63,8 @@ class CollisionChecker:
         if clearance:
             for g in self.idx.robot_geoms:
                 dist = mujoco.mj_geomDistance(m, d, int(g), self.idx.floor_geom, self.distmax, None)
-                res.floor_by_body[m.body(m.geom_bodyid[g]).name] = float(dist)
+                body = m.body(m.geom_bodyid[g]).name                  # a body may have several collision geoms
+                res.floor_by_body[body] = min(float(dist), res.floor_by_body.get(body, np.inf))
                 if dist < res.floor_clearance_m:
                     res.floor_clearance_m, res.floor_geom_body = float(dist), m.body(m.geom_bodyid[g]).name
             for g1, g2 in self.self_pairs:

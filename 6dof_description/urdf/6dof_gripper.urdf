@@ -9,6 +9,10 @@
   <color rgba="0.020 0.020 0.020 1.000"/>
 </material>
 
+<material name="orange">
+  <color rgba="1.000 0.420 0.000 1.000"/>
+</material>
+
 <link name="base_link">
   <inertial>
     <origin xyz="0.0005722199975482752 0.004245800700454947 0.016568477430291967" rpy="0 0 0"/>
@@ -71,10 +75,23 @@
     </geometry>
     <material name="black"/>
   </visual>
+  <visual>
+    <origin xyz="-0.04 -0.002984 -0.092054" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="package://6dof_description/meshes/link_1_ring.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="orange"/>
+  </visual>
   <collision>
     <origin xyz="-0.04 -0.002984 -0.092054" rpy="0 0 0"/>
     <geometry>
       <mesh filename="package://6dof_description/meshes/link_1_engraved.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+  <collision>
+    <origin xyz="-0.04 -0.002984 -0.092054" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="package://6dof_description/meshes/link_1_ring.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>
@@ -99,10 +116,23 @@
     </geometry>
     <material name="black"/>
   </visual>
+  <visual>
+    <origin xyz="-0.04 -0.002984 -0.292054" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="package://6dof_description/meshes/link__1__1_ring.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="orange"/>
+  </visual>
   <collision>
     <origin xyz="-0.04 -0.002984 -0.292054" rpy="0 0 0"/>
     <geometry>
       <mesh filename="package://6dof_description/meshes/link__1__1_engraved.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+  <collision>
+    <origin xyz="-0.04 -0.002984 -0.292054" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="package://6dof_description/meshes/link__1__1_ring.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>

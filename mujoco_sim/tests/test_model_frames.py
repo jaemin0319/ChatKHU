@@ -49,7 +49,9 @@ def test_original_model_copy_unchanged():
     """The model files used by the simulator must equal branch urdf@b2b4038 plus the 2026-10-24 change (every joint
     origin 2 mm along its axis toward the child: urdf/6dof.urdf, urdf/6dof.xacro, mujoco/6dof_control.xml) and the
     2026-10-27 change (links 2-3 and 3-4 with the engraved covers: meshes/*_engraved.stl, *_engraving.stl drawn black;
-    the old link meshes stay unused). An unintended edit of these files fails here."""
+    the old link meshes stay unused) and the 2026-10-28 change (orange rings ID 70 / OD 80 / 6 mm at link_1's joint 2
+    end and link__1__1's joint 3 end: the seat is cut from *_engraved.stl, meshes/*_ring.stl visual + collision).
+    An unintended edit of these files fails here."""
     import json
     ref = json.loads((ROOT / "tests/original_model_sha256.json").read_text())
     for name, sha in ref.items():

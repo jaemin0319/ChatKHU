@@ -9,4 +9,8 @@
   <color rgba="0.020 0.020 0.020 1.000"/>
 </material>
 
+<material name="orange">
+  <color rgba="1.000 0.420 0.000 1.000"/>
+</material>
+
 </robot>
