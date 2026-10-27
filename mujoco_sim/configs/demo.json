@@ -257,6 +257,15 @@
       1.0
     ],
     "_rgba_note": "same rgba as the original links (rendered white/light grey)",
+    "body_mesh": "../6dof_description/meshes/gripper_body.stl",
+    "fingers_mesh": "../6dof_description/meshes/gripper_fingers.stl",
+    "fingers_rgba": [
+      0.02,
+      0.02,
+      0.02,
+      1.0
+    ],
+    "_fingers_note": "2026-10-28 user: fingers black. Drawing only: gripper.stl split into its connected components (body = mount plate + housing, fingers = the two tip prongs; triangles unchanged) drawn as two visual geoms. The collision geom keeps gripper.stl (mass, inertia, hull unchanged) in group 3 (hidden), so it is not drawn over the fingers.",
     "_mesh_note": "User-provided STL '그리퍼URDF용.stl' (Inventor export, mm) renamed to ASCII gripper.stl; sha256 de8b75f01a2fcd93a44d39e79e85e628d3686aa28bcaefdbab36aa9746dcee6f",
     "urdf_src_dir": "../6dof_description/urdf",
     "urdf_out_dir": "../6dof_description/urdf",

@@ -51,7 +51,7 @@ def test_original_model_copy_unchanged():
     2026-10-27 change (links 2-3 and 3-4 with the engraved covers: meshes/*_engraved.stl, *_engraving.stl drawn black;
     the old link meshes stay unused) and the 2026-10-28 change (orange rings ID 70 / OD 80 / 6 mm at link_1's joint 2
     end and link__1__1's joint 3 and joint 4 ends: the seat is cut from *_engraved.stl, meshes/*_ring.stl visual +
-    collision).
+    collision; gripper fingers drawn black: meshes/gripper_body.stl + gripper_fingers.stl = gripper.stl split).
     An unintended edit of these files fails here."""
     import json
     ref = json.loads((ROOT / "tests/original_model_sha256.json").read_text())

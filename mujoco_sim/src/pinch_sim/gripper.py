@@ -4,7 +4,9 @@ Kept unchanged: joint Revolute_6 (parent r_a__2__1, child housing_1, axis local 
 `housing_1` and its frame, the 6 joints and 6 torque motors. Removed: the two housing_1.stl geoms
 (visual + collision), the housing_1 mesh asset, and housing_1's explicit inertial.
 Added on the SAME (rotating) body: the gripper mesh (visual + collision geom), mass from an assumed
-density, and the TCP at the gripper tip. No finger joints or actuators.
+density, and the TCP at the gripper tip. No finger joints or actuators. With `fingers_mesh` the drawing is split:
+gripper.stl's body and fingers (its connected components, triangles unchanged) are two visual geoms in their own
+colours, and the collision geom (still the whole gripper.stl) is hidden in group 3 so it does not cover them.
 
 Mount transform (mesh file coordinates in mm -> housing_1 body frame in m):
     p_body = R (scale * p_mesh - scale * c_mount) + t_mount
@@ -50,6 +52,15 @@ def tcp_local(gcfg: dict) -> tuple[np.ndarray, np.ndarray]:
     return p, axis
 
 
+def visual_parts(gcfg: dict) -> list[tuple[str, str, list, str]]:
+    """(geom name, mesh path, rgba, URDF material) of the drawn parts."""
+    rgba = gcfg.get("rgba", [0.35, 0.55, 0.85, 1])
+    if "fingers_mesh" not in gcfg:
+        return [("gripper_visual", gcfg["mesh"], rgba, "silver")]
+    return [("gripper_visual", gcfg["body_mesh"], rgba, "silver"),
+            ("gripper_fingers_visual", gcfg["fingers_mesh"], gcfg["fingers_rgba"], "black")]
+
+
 def apply_to_spec(spec: mujoco.MjSpec, gcfg: dict, meshdir_abs: Path) -> dict:
     """Remove housing_1 geometry/inertia from the mount body and add the gripper there."""
     body = spec.body(gcfg["mount_body"])
@@ -61,16 +72,24 @@ def apply_to_spec(spec: mujoco.MjSpec, gcfg: dict, meshdir_abs: Path) -> dict:
     if len(removed) != 2:
         raise RuntimeError(f"expected 2 {gcfg['removed_mesh']} geoms on {gcfg['mount_body']}, found {removed}")
     spec.delete(spec.mesh(gcfg["removed_mesh"]))
-    mesh_file = Path(ROOT / gcfg["mesh"]).resolve()
-    spec.add_mesh(name="gripper", file=str(Path(mesh_file).relative_to(meshdir_abs.resolve(), walk_up=True)),
-                  scale=[gcfg["scale"]] * 3)
+
+    def add_mesh(name, path):
+        rel = Path(ROOT / path).resolve().relative_to(meshdir_abs.resolve(), walk_up=True)
+        spec.add_mesh(name=name, file=str(rel), scale=[gcfg["scale"]] * 3)
+    add_mesh("gripper", gcfg["mesh"])
     pos, quat, _ = mount(gcfg)
     rgba = gcfg.get("rgba", [0.35, 0.55, 0.85, 1])
-    # same pattern as the original links: a visual geom (group 1, no contacts, no mass) and a collision geom
-    body.add_geom(name="gripper_visual", type=mujoco.mjtGeom.mjGEOM_MESH, meshname="gripper", pos=pos, quat=quat,
-                  group=1, contype=0, conaffinity=0, density=0, rgba=rgba)
+    parts = visual_parts(gcfg)
+    # same pattern as the original links: visual geoms (group 1, no contacts, no mass) and a collision geom
+    for name, mesh, part_rgba, _ in parts:
+        mesh_name = Path(mesh).stem
+        if mesh_name != "gripper":
+            add_mesh(mesh_name, mesh)
+        body.add_geom(name=name, type=mujoco.mjtGeom.mjGEOM_MESH, meshname=mesh_name, pos=pos, quat=quat,
+                      group=1, contype=0, conaffinity=0, density=0, rgba=part_rgba)
     body.add_geom(name="gripper_collision", type=mujoco.mjtGeom.mjGEOM_MESH, meshname="gripper", pos=pos,
-                  quat=quat, group=0, contype=1, conaffinity=1, mass=gcfg["mass_kg"], rgba=rgba)
+                  quat=quat, group=3 if len(parts) > 1 else 0, contype=1, conaffinity=1, mass=gcfg["mass_kg"],
+                  rgba=rgba)
     body.explicitinertial = False          # inertia now computed from the gripper collision geom (uniform density)
     return {"removed_geoms": removed, "removed_mesh": gcfg["removed_mesh"], "geom_pos_m": pos.round(6).tolist(),
             "geom_quat": quat.round(6).tolist()}
@@ -85,14 +104,24 @@ def _rpy(R) -> list[float]:
     return [float(r), float(p), float(y)]
 
 
+def _mesh_uri(gcfg: dict, mesh: str) -> str:
+    """urdf_mesh_uri's directory + the mesh file name (machine-independent), else a file:// path."""
+    if gcfg.get("urdf_mesh_uri"):
+        return gcfg["urdf_mesh_uri"].rsplit("/", 1)[0] + "/" + Path(mesh).name
+    return "file://" + str(Path(ROOT / mesh).resolve())
+
+
 def urdf_link_block(gcfg: dict, inertial: dict) -> str:
     pos, _, R = mount(gcfg)
     rpy = _rpy(R)
-    mesh_uri = gcfg.get("urdf_mesh_uri") or "file://" + str(Path(ROOT / gcfg["mesh"]).resolve())
     s = gcfg["scale"]
     I = inertial["fullinertia"]   # ixx iyy izz ixy ixz iyz in the link frame, about the CoM
-    geom = (f'    <origin xyz="{pos[0]:.6f} {pos[1]:.6f} {pos[2]:.6f}" rpy="{rpy[0]:.6f} {rpy[1]:.6f} {rpy[2]:.6f}"/>\n'
-            f'    <geometry>\n      <mesh filename="{mesh_uri}" scale="{s} {s} {s}"/>\n    </geometry>\n')
+
+    def geom(mesh):
+        return (f'    <origin xyz="{pos[0]:.6f} {pos[1]:.6f} {pos[2]:.6f}" rpy="{rpy[0]:.6f} {rpy[1]:.6f} {rpy[2]:.6f}"/>\n'
+                f'    <geometry>\n      <mesh filename="{_mesh_uri(gcfg, mesh)}" scale="{s} {s} {s}"/>\n    </geometry>\n')
+    visuals = "".join(f'  <visual>\n{geom(mesh)}    <material name="{material}"/>\n  </visual>\n'
+                      for _, mesh, _, material in visual_parts(gcfg))
     c = inertial["com"]
     return (f'<link name="{gcfg["mount_body"]}">\n'
             f'  <!-- housing_1.stl removed; fixed gripper ({Path(gcfg["mesh"]).name}) on the same link, '
@@ -101,8 +130,8 @@ def urdf_link_block(gcfg: dict, inertial: dict) -> str:
             f'    <mass value="{inertial["mass"]:.6f}"/>\n'
             f'    <inertia ixx="{I[0]:.9f}" iyy="{I[1]:.9f}" izz="{I[2]:.9f}" ixy="{I[3]:.9f}" '
             f'ixz="{I[4]:.9f}" iyz="{I[5]:.9f}"/>\n  </inertial>\n'
-            f'  <visual>\n{geom}    <material name="silver"/>\n  </visual>\n'
-            f'  <collision>\n{geom}  </collision>\n</link>')
+            f'{visuals}'
+            f'  <collision>\n{geom(gcfg["mesh"])}  </collision>\n</link>')
 
 
 def write_urdf_variants(gcfg: dict, inertial: dict, out_dir: Path) -> list[str]:

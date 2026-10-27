@@ -16,5 +16,7 @@
  "meshes/link__1__1_engraved.stl": "a615bef98ca300a7595d85d22f6b6685b6a232d7288a128c9c40a9e6e30474f4",
  "meshes/link__1__1_engraving.stl": "0d26337f471326a10506ca91d0ba3366636e4ea65378ada001967aee0a1ec9c8",
  "meshes/link_1_ring.stl": "2c1cfb495015e4a3acb433a501b0c7d67bb133322022d682a7686b4f3d360a86",
- "meshes/link__1__1_ring.stl": "273d4a2ade2adec3dffb57182eabe2ab6d57180958da1e341010d51b02d96e86"
+ "meshes/link__1__1_ring.stl": "273d4a2ade2adec3dffb57182eabe2ab6d57180958da1e341010d51b02d96e86",
+ "meshes/gripper_body.stl": "f870328015f6a39a3b77672979e594ac9c4440c7febd4cd4a76bfae9469e214b",
+ "meshes/gripper_fingers.stl": "86b93fa799db26115e655465d0b784ad8e376e24059a18fb80ad88506dc47bd7"
 }

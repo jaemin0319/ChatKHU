@@ -27,7 +27,7 @@ def test_old_end_part_removed_and_chain_kept(scene, gcfg):
     assert np.allclose(m.jnt_axis[j6.id], [-1, 0, 0])
     assert all(m.mesh(i).name != "housing_1" for i in range(m.nmesh))       # old mesh asset gone
     names = sorted(m.geom(g).name for g in range(m.ngeom) if m.geom_bodyid[g] == body)
-    assert names == ["gripper_collision", "gripper_visual"]                 # only the gripper on that body
+    assert names == ["gripper_collision", "gripper_fingers_visual", "gripper_visual"]   # only the gripper on that body
     assert np.isclose(m.body_mass[body], gcfg["mass_kg"])
     assert m.site_bodyid[m.site("tcp").id] == body
 
@@ -57,6 +57,30 @@ def test_gripper_and_tcp_rotate_with_j6(scene, kin, q_ready):
 def load_g():
     from pinch_sim.model import load_config
     return load_config()["gripper"]
+
+
+def _stl_triangles(path) -> np.ndarray:
+    """Binary STL vertices, (n, 3, 3) float32 in file units."""
+    import struct
+    b = path.read_bytes()
+    n = struct.unpack("<I", b[80:84])[0]
+    return np.frombuffer(b[84:84 + 50 * n], dtype=np.dtype([("n", "<f4", 3), ("v", "<f4", (3, 3)), ("a", "<u2")]))["v"]
+
+
+def test_black_fingers_are_drawing_only(scene, gcfg):
+    """gripper.stl = body + fingers (same triangles); the fingers are drawn black, the collision geom is the whole
+    gripper.stl, hidden (group 3) so its grey does not cover the fingers."""
+    m, _, _ = scene
+    whole, body, fingers = (_stl_triangles(ROOT / gcfg[k]) for k in ("mesh", "body_mesh", "fingers_mesh"))
+    key = lambda t: sorted(map(bytes, t))                                   # noqa: E731
+    assert key(np.concatenate([body, fingers])) == key(whole) and len(fingers) == 3060
+    tip = np.array(gcfg["tip_center_mesh_mm"])
+    assert np.isclose(fingers.reshape(-1, 3)[:, 2].max(), tip[2], atol=1e-3)   # the fingers end at the tip face
+    vis, fin, col = (m.geom(n) for n in ("gripper_visual", "gripper_fingers_visual", "gripper_collision"))
+    assert np.allclose(fin.rgba, gcfg["fingers_rgba"]) and np.allclose(vis.rgba, gcfg["rgba"])
+    assert vis.group == fin.group == 1 and vis.contype == fin.contype == 0 and fin.conaffinity == 0
+    assert col.group == 3 and col.contype == 1 and col.conaffinity == 1
+    assert m.mesh(col.dataid[0]).name == "gripper"
 
 
 def test_scale_and_mount_match_old_part(gcfg):
