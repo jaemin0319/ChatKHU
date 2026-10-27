@@ -1,6 +1,6 @@
 {
  "mujoco/scene.xml": "bec1ff0a4e1fb224a4f369fc9a47fa16dcd84d5529328b25fba7cab155987804",
- "mujoco/6dof_control.xml": "e5b725a74bb525c2b5115f5d6a1ee048a3624688bdb890002b99085e7ac3b3ff",
+ "mujoco/6dof_control.xml": "9c7e3d2909587bdd13c61172cf890fd25c40a601e88d43f3295a81e19d93daf7",
  "meshes/base_link.stl": "3bc640575627f9e78849784212f124aaac45bc9283b32a6157195d161cf3edac",
  "meshes/r_a_1.stl": "d73a3419ec13334f376db0de9891af21a9c35e299bd5ca34e4e44fda66efd5fb",
  "meshes/link_1.stl": "7f24e5d1ef43c28b9455615a0f9cb9cccb5acdf10d609333b614ba56a30ccfb7",
@@ -8,7 +8,11 @@
  "meshes/r_a__1__1.stl": "28526e462a07e790f2589b802c4b0fad0ea212458d8190b6589e8a0d6fd17615",
  "meshes/r_a__2__1.stl": "e7158912836a46d24a6208d9d4948895e44b69946c078e5ef1741c1e17ace851",
  "meshes/housing_1.stl": "a6d9dba509929dae135b1b775521476f8a5ff0554b9ddd3cd3797bb4d8df6dc0",
- "urdf/6dof.xacro": "539ea9ff3608dc4490506735d6bcc3b0960c966f9485cf5b7064fd4dd077c829",
- "urdf/6dof.urdf": "2ee13cf0d55d292f069e0926e444e50b0a729bb13f00097954d94371bbd55064",
- "urdf/materials.xacro": "61c66150bc6b52c0f50d0697e08fe06497433d8ec978b4eb8941577695fd3595"
+ "urdf/6dof.xacro": "bcd4082c57426175c2fc00d7ea3314cb689ae0796a776299e82582dc98e294bb",
+ "urdf/6dof.urdf": "97f0a6333c470d4175a71c311159fc2fddf2dda7cefb9dc5d9f8c1b06721fb35",
+ "urdf/materials.xacro": "6650ea39a86b8cc9f450c8880f281c9f0e889ea5df72d28d0b1d4e96db8e41e5",
+ "meshes/link_1_engraved.stl": "c42052f5f8004dd9e7b0fb28b4d2bd116fa6498c46304f0b460c18c5d07f628d",
+ "meshes/link_1_engraving.stl": "3b7e0fb56a458c56723680dbbf306e715d24ebe0e287b1b0a0e1b260d71d777a",
+ "meshes/link__1__1_engraved.stl": "b447036eb38b917fc2c953342d5ed1969a6b47e1769e5fc17bc2b1216cc8e78b",
+ "meshes/link__1__1_engraving.stl": "0d26337f471326a10506ca91d0ba3366636e4ea65378ada001967aee0a1ec9c8"
 }

@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from pinch_sim.arm_link import ArmLink
-from pinch_sim.model import config_sha, load_config, load_scene, ready_q
+from pinch_sim.model import ROOT, config_sha, file_sha, load_config, load_scene, ready_q
 from pinch_sim.real_arm import DEFAULT_ROBOT_YAML, RealArm, apply_profile, hello
 from pinch_sim.session import Session
 from pinch_sim.targets import make_target, precheck, sample_target
@@ -77,7 +77,7 @@ def test_default_demo_is_unchanged():
     m, idx, sha = load_scene(cfg)
     assert np.allclose(idx.lo, -np.pi) and np.allclose(idx.hi, np.pi)
     assert np.allclose(ready_q(m)[idx.qpos], cfg["ready"]["q_rad"])
-    assert sha.startswith("dc14b91e")
+    assert sha == file_sha(ROOT / cfg["model"]["generated_scene"])
     if DEFAULT_ROBOT_YAML.exists():
         apply_profile(cfg, RealArm.load())
     assert config_sha(cfg) == before                      # apply_profile never changes its input
@@ -88,7 +88,7 @@ def test_profile_uses_the_arm_file(real):
     assert np.allclose(idx.lo, arm.limits_rad[:, 0]) and np.allclose(idx.hi, arm.limits_rad[:, 1])
     assert np.allclose(ready_q(m)[idx.qpos], arm.home_q_rad)
     assert m.geom_pos[m.geom("desk_top").id][1] < 0               # the desk is on the arm's side (-Y)
-    assert sha.startswith("dc14b91e")                              # the same scene file as the arm program's copy
+    assert sha == file_sha(ROOT / cfg["model"]["generated_scene"])  # the file the arm program's copy must match
     h = hello(cfg, sha)
     assert h["robot_sha"] == arm.robot_sha and h["limits_deg"] == np.degrees(arm.limits_rad).round(6).tolist()
     assert h["validation"]["joint_speed_max_deg_s"] <= 22.5 and h["validation"]["qdd_max_deg_s2"] <= 70.0
@@ -126,7 +126,7 @@ def _accept_and_play(s, d, fake, final="DONE", frac=1.0):
     ex = s.executor
     execute = fake.of("execute")[-1]
     assert execute["dt"] == 0.005 and len(execute["q"]) == len(execute["qd"]) > 100
-    assert execute["meta"]["robot_sha"] == real_sha(s) and execute["meta"]["model_sha"].startswith("dc14b91e")
+    assert execute["meta"]["robot_sha"] == real_sha(s) and execute["meta"]["model_sha"] == s.ctx.model_sha
     s.on_arm(d, [{"type": "ack", "traj_id": ex.traj_id, "accepted": True, "duration_s": ex.duration}])
     tr = s.report.trajectory if s.report is not None else ex.traj
     for t in np.linspace(0, ex.duration * frac, 25):              # the arm moves; the simulator shows it

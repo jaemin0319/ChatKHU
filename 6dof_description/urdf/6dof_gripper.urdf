@@ -5,6 +5,10 @@
   <color rgba="0.700 0.700 0.700 1.000"/>
 </material>
 
+<material name="black">
+  <color rgba="0.020 0.020 0.020 1.000"/>
+</material>
+
 <link name="base_link">
   <inertial>
     <origin xyz="0.0005722199975482752 0.004245800700454947 0.016568477430291967" rpy="0 0 0"/>
@@ -56,14 +60,21 @@
   <visual>
     <origin xyz="-0.04 -0.002984 -0.092054" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="package://6dof_description/meshes/link_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="package://6dof_description/meshes/link_1_engraved.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
+  </visual>
+  <visual>
+    <origin xyz="-0.04 -0.002984 -0.092054" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="package://6dof_description/meshes/link_1_engraving.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="black"/>
   </visual>
   <collision>
     <origin xyz="-0.04 -0.002984 -0.092054" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="package://6dof_description/meshes/link_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="package://6dof_description/meshes/link_1_engraved.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>
@@ -77,14 +88,21 @@
   <visual>
     <origin xyz="-0.04 -0.002984 -0.292054" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="package://6dof_description/meshes/link__1__1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="package://6dof_description/meshes/link__1__1_engraved.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
+  </visual>
+  <visual>
+    <origin xyz="-0.04 -0.002984 -0.292054" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="package://6dof_description/meshes/link__1__1_engraving.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="black"/>
   </visual>
   <collision>
     <origin xyz="-0.04 -0.002984 -0.292054" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="package://6dof_description/meshes/link__1__1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="package://6dof_description/meshes/link__1__1_engraved.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>

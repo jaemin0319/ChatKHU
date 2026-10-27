@@ -54,14 +54,21 @@
   <visual>
     <origin xyz="-0.04 -0.002984 -0.092054" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="package://6dof_description/meshes/link_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="package://6dof_description/meshes/link_1_engraved.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
+  </visual>
+  <visual>
+    <origin xyz="-0.04 -0.002984 -0.092054" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="package://6dof_description/meshes/link_1_engraving.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="black"/>
   </visual>
   <collision>
     <origin xyz="-0.04 -0.002984 -0.092054" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="package://6dof_description/meshes/link_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="package://6dof_description/meshes/link_1_engraved.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>
@@ -75,14 +82,21 @@
   <visual>
     <origin xyz="-0.04 -0.002984 -0.292054" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="package://6dof_description/meshes/link__1__1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="package://6dof_description/meshes/link__1__1_engraved.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
+  </visual>
+  <visual>
+    <origin xyz="-0.04 -0.002984 -0.292054" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="package://6dof_description/meshes/link__1__1_engraving.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="black"/>
   </visual>
   <collision>
     <origin xyz="-0.04 -0.002984 -0.292054" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="package://6dof_description/meshes/link__1__1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="package://6dof_description/meshes/link__1__1_engraved.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>
