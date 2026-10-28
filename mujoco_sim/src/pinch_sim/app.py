@@ -59,7 +59,8 @@ from .monitor import SimFrameSource, VideoFrameSource, draw_overlay_2d  # noqa: 
 from .overlay import add_overlay, build_overlay, peak_text  # noqa: E402
 from .screen import pick_index, pixel_to_vertical  # noqa: E402
 from .session import EDITABLE, KOREAN, Session  # noqa: E402
-from .ui import MonitorUI, Notices, arrange_viewer, auto_layout, monitors, notice_text, protect_points, window_pos  # noqa: E402
+from .ui import (Layout, MonitorUI, Notices, arrange_viewer, auto_layout, monitors, notice_text,  # noqa: E402
+                 protect_points, window_pos)
 from .voice_gateway import VoiceGateway  # noqa: E402
 
 WIN = "side_cam (click buttons / keys here)"
@@ -331,6 +332,11 @@ def main(argv=None):
                          "the simulator executes as usual (rehearsal on the real camera image, nothing moves)")
     ap.add_argument("--arm-link", metavar="SOCKET",
                     help="--real-arm: the arm program's socket (default $XDG_RUNTIME_DIR/manipulator_control/arm.sock)")
+    ap.add_argument("--ui", choices=("web", "cv"), default="web",
+                    help="monitor: web = full-screen browser window (webui.py, Figma design 2026-10-28), cv = the "
+                         "OpenCV side_cam window (progress strip, bubbles, button bar)")
+    ap.add_argument("--browser", choices=("auto", "chrome", "firefox", "none"), default="auto",
+                    help="--ui web: which browser opens the monitor full screen (none: only print the URL)")
     ap.add_argument("--depth", action="store_true",
                     help="Astra depth (pac_vision, OpenNI2) for the hand: a pinch moves the grabbed point by the "
                          "hand's 3-D motion, 1:1 (needs --hand, --video and a real pac_vision --calib)")
@@ -532,20 +538,36 @@ def main(argv=None):
         marker_mon = MarkerMonitor(cam_model, Path(a.calib).resolve().parent / "markers.yaml")
         session.calib_state = "unverified" if calib_trust == "unverified" else marker_mon.state
         print(f"calibration: {calib_text(session.calib_state, marker_mon)}", flush=True)
-    # 16:10 camera image (render W x H, scaled), progress strip above, buttons below (ui.py)
     mons = monitors()
-    layout = auto_layout(cam_model.width, cam_model.height, a.side_scale, mons[0] if mons else None)
+    web = browser = alerts = ui_dispatch = None
+    if a.ui == "web":
+        # browser monitor (webui.py): only the camera image (+ path, hand) is a frame; everything around it is HTML.
+        # The frame is sent at about 1280 px wide; mouse positions come back as fractions of it.
+        from .voice_gateway import Dispatcher
+        from .webui import Alerts, WebUI, open_browser
+        layout = Layout(cam_model.width, cam_model.height, min(2.0, max(1.0, 1280 / cam_model.width)), top_h=0, bar_h=0)
+        alerts = Alerts(notice_text)
+        session.listeners.append(lambda ev: alerts.on_event(ev, session))
+        ui_dispatch = Dispatcher()                 # chips / "검증 후 이동": the voice protocol's commands and checks
+        web = WebUI().start()
+        browser = open_browser(web.url, a.browser)
+        win_xy = (0, 0)
+        print(f"web monitor: http://127.0.0.1:{web.port}/ (frame {layout.img_w}x{layout.img_h}, "
+              + (f"{a.browser} browser full screen)" if browser is not None else f"open {web.url})"), flush=True)
+    else:
+        # 16:10 camera image (render W x H, scaled), progress strip above, buttons below (ui.py)
+        layout = auto_layout(cam_model.width, cam_model.height, a.side_scale, mons[0] if mons else None)
+        win_xy = window_pos(layout, a.side_pos, mons[0] if mons else None)
+        # GUI_NORMAL: no Qt zoom/pan toolbar (zooming the image would break the pixel -> ray mapping)
+        cv2.namedWindow(WIN, cv2.WINDOW_AUTOSIZE | cv2.WINDOW_GUI_NORMAL)
+        cv2.moveWindow(WIN, *win_xy)
+        # the window manager may place the MuJoCo window over it; keep the button bar reachable
+        cv2.setWindowProperty(WIN, cv2.WND_PROP_TOPMOST, 1)
+        print(f"side_cam window {layout.width}x{layout.height} at {win_xy} (image {layout.img_w}x{layout.img_h}, "
+              f"scale {layout.scale}, monitors {mons})", flush=True)
     ui = MonitorUI(layout)
     notices = Notices()
     session.listeners.append(lambda ev: notices.push(notice_text(ev, session)))
-    win_xy = window_pos(layout, a.side_pos, mons[0] if mons else None)
-    # GUI_NORMAL: no Qt zoom/pan toolbar (zooming the image would break the pixel -> ray mapping)
-    cv2.namedWindow(WIN, cv2.WINDOW_AUTOSIZE | cv2.WINDOW_GUI_NORMAL)
-    cv2.moveWindow(WIN, *win_xy)
-    # the window manager may place the MuJoCo window over it; keep the button bar reachable
-    cv2.setWindowProperty(WIN, cv2.WND_PROP_TOPMOST, 1)
-    print(f"side_cam window {layout.width}x{layout.height} at {win_xy} (image {layout.img_w}x{layout.img_h}, "
-          f"scale {layout.scale}, monitors {mons})", flush=True)
     clicks: list[str] = []
     mouse: list[tuple] = []          # ("press"|"move"|"release"|"cancel", x, y) in displayed-image pixels
     mouse_editor = MouseEditor(cam_model, cfg, layout.scale)
@@ -623,7 +645,8 @@ def main(argv=None):
         elif event == cv2.EVENT_RBUTTONDOWN:
             mouse.append(("cancel", xi, yi))
 
-    cv2.setMouseCallback(WIN, on_mouse)
+    if web is None:
+        cv2.setMouseCallback(WIN, on_mouse)
     gateway = VoiceGateway(a.voice_gateway or None, ROOT / f"logs/voice_gateway_{stamp}.jsonl").start(session) \
         if a.voice_gateway is not None else None
     beat = [time.perf_counter()]
@@ -666,7 +689,7 @@ def main(argv=None):
             last_render = now
             ov = build_overlay(session, d)
             frame += 1
-            if frame in (10, 60) and not a.no_arrange:   # the viewer window exists by now; once more in case
+            if frame in (10, 60) and not a.no_arrange and web is None:   # the viewer window exists by now; once more in case
                 print("window arrange:", arrange_viewer("MuJoCo : 6dof scene", win_xy[0],   # the WM moved it
                                                         mons[0] if mons else None), flush=True)
             with viewer.lock():
@@ -689,7 +712,7 @@ def main(argv=None):
                 session.calib_state = marker_mon.state
                 session._emit(f"camera calibration {marker_mon.state}: {marker_mon.text()}", "calib",
                               calib=marker_mon.state)
-            img = draw_overlay_2d(raw, cam_model, ov, minimal=bool(a.video))
+            img = draw_overlay_2d(raw, cam_model, ov, line_px=5 if web is not None else 3, minimal=bool(a.video))
             if a.canvas or (a.video and a.calib):
                 from .canvas import draw_ab, draw_axes
                 if a.video:
@@ -699,8 +722,11 @@ def main(argv=None):
             if arm is not None:
                 hint = arm.badge() + (f"  |  {hint}" if hint else "")
             buttons = [(k, label, ENABLED[k](session.state)) for k, label in BUTTONS]
-            img = ui.render(img, session, buttons, notices.current(), gateway.chat if gateway else [], hint,
-                            protect_points(ov, cam_model, layout.scale))      # bubbles/notices never cover these
+            if web is None:
+                img = ui.render(img, session, buttons, notices.current(), gateway.chat if gateway else [], hint,
+                                protect_points(ov, cam_model, layout.scale))      # bubbles/notices never cover these
+            else:
+                img = cv2.resize(img, (layout.img_w, layout.img_h), interpolation=cv2.INTER_LINEAR)
             if hand_ctrl is not None:
                 from .hand_input import draw_preview
                 lm, _, _, _, hframe = hand_cam.latest()
@@ -710,15 +736,42 @@ def main(argv=None):
                 hand_ctrl.draw(img, layout.top_h, cam_model, layout.scale,
                                landmarks=lm if shared and not a.no_hand_preview else None,
                                img_wh=(layout.img_w, layout.img_h), text=ui.text)
-            if session.calib_state:
-                draw_badge(img, ui.text, layout, calib_text(session.calib_state, marker_mon),
-                           CALIB_LEVEL.get(session.calib_state, "warn"))
-            cv2.imshow(WIN, img)
+            if web is not None:
+                from .webui import ui_state
+                calib = None if not session.calib_state else {
+                    "state": session.calib_state, "text": calib_text(session.calib_state, marker_mon),
+                    "level": CALIB_LEVEL.get(session.calib_state, "warn")}
+                web.push_frame(img)
+                web.push_state(ui_state(
+                    session, alerts=alerts, chat=list(gateway.chat) if gateway else [], hint=hint,
+                    voice_connected=bool(gateway is not None and gateway.connected), calib=calib,
+                    arm_badge=arm.badge() if arm is not None else "", tcp=ov.tcp, frame_wh=(layout.img_w, layout.img_h),
+                    enabled={k: bool(ENABLED[k](session.state)) for k, _ in BUTTONS}))
+            else:
+                if session.calib_state:
+                    draw_badge(img, ui.text, layout, calib_text(session.calib_state, marker_mon),
+                               CALIB_LEVEL.get(session.calib_state, "warn"))
+                cv2.imshow(WIN, img)
             if snap_dir and session.state != last_state:
                 cv2.imwrite(str(snap_dir / f"f{frame:05d}_{session.state}.png"), img)
             last_state = session.state
-            key = cv2.waitKey(1) & 0xFF
-            keys = [chr(key).upper()] if key not in (255,) and 32 <= key < 127 else []
+            actions = []
+            if web is None:
+                key = cv2.waitKey(1) & 0xFF
+                keys = [chr(key).upper()] if key not in (255,) and 32 <= key < 127 else []
+            else:                            # browser: keys, mouse on the image (fractions of the frame), actions
+                keys = []
+                for ev in web.drain():
+                    if ev["type"] == "key":
+                        keys.append(ev["key"])
+                    elif ev["type"] == "mouse":
+                        pt = (ev["kind"], ev["u"] * layout.img_w, ev["v"] * layout.img_h)
+                        if pt[0] == "move" and mouse and mouse[-1][0] == "move":
+                            mouse[-1] = pt                # coalesce: only the latest position matters
+                        else:
+                            mouse.append(pt)
+                    else:
+                        actions.append(ev)
             keys += clicks
             clicks.clear()
             while script and script[0][0] <= now - app_start:
@@ -746,6 +799,12 @@ def main(argv=None):
                         mouse_editor.release(session, d)
                     else:
                         mouse_editor.cancel(session)
+            for act in actions:              # browser buttons: keys of the same path, or a voice-protocol command
+                from .webui import apply_action
+                more, why = apply_action(session, d, act, ui_dispatch)
+                keys += more
+                if why:
+                    alerts.toast("요청을 처리하지 않았어요", why)
             for k in keys:
                 if k == "Q":
                     viewer.close()
@@ -772,10 +831,16 @@ def main(argv=None):
                 msgs = arm.drain()
                 with viewer.lock():
                     session.on_arm(d, msgs)
-            if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
+            if web is None and cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
+                viewer.close()
+            if browser is not None and browser.poll() is not None:   # the monitor window was closed
                 viewer.close()
     if gateway is not None:
         gateway.close()
+    if web is not None:
+        web.close()
+        if browser is not None and browser.poll() is None:
+            browser.terminate()
     if arm is not None:
         arm.close()
     if hand_cam is not None:

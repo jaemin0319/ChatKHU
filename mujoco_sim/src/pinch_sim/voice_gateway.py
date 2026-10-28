@@ -67,13 +67,14 @@ class Dispatcher:
         self._done: OrderedDict[str, dict] = OrderedDict()
         self._cache_size = cache_size
 
-    def handle(self, session, d, req: dict) -> dict:
+    def handle(self, session, d, req: dict, actor: str = "voice") -> dict:
+        """actor: who the session events are tagged with (the browser monitor's buttons use "ui")."""
         rid = str(req.get("request_id") or "")
         cmd = str(req.get("command") or "")
         if rid and rid in self._done:                       # duplicated function call: answer, do nothing
             return dict(self._done[rid], duplicate=True)
         before_state, before_rev = session.state, session.rev
-        accepted, code, detail = self._run(session, d, cmd, rid, req)
+        accepted, code, detail = self._run(session, d, cmd, rid, req, actor)
         res = {"v": PROTOCOL, "type": "result", "request_id": rid, "command": cmd, "accepted": bool(accepted),
                "reason_code": "" if accepted else code, "message": session.message,
                "previous_state": before_state, "state": session.state, "rev_before": before_rev,
@@ -85,7 +86,7 @@ class Dispatcher:
         return res
 
     # ------------------------------------------------------------------ command contract
-    def _run(self, s, d, cmd, rid, req):
+    def _run(self, s, d, cmd, rid, req, actor="voice"):
         if req.get("v") != PROTOCOL or req.get("type") != "command":
             return False, "BAD_REQUEST", "unsupported message"
         if cmd not in COMMANDS:
@@ -103,7 +104,7 @@ class Dispatcher:
             if exp != s.rev:
                 return False, "STALE_REVISION", f"decided on rev {exp}, sim is at rev {s.rev}"
         dragging = s.edit is not None and s.edit.dragging
-        with s.acting("voice", rid):
+        with s.acting(actor, rid):
             if cmd == "save_paths":
                 f = s.save_paths(SAVE_DIR)
                 return f is not None, "NOTHING_TO_SAVE", {"file": str(f) if f else ""}
