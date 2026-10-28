@@ -7,8 +7,7 @@
 ```bash
 cd 26_project_manipulator          # 받은 저장소 폴더 (./setup.sh가 아래 두 줄을 대신한다)
 python3 -m venv .venv-voice && .venv-voice/bin/pip install -r voice/requirements.lock
-mkdir -p ~/.config/pinch_khu && install -m 600 /dev/null ~/.config/pinch_khu/env   # 한 줄: BAZE_API_KEY=...
-source voice/env.sh      # ROS PYTHONPATH 제거, .venv-voice 켜기, 키 파일 읽기 (키는 출력하지 않음)
+source voice/env.sh      # ROS PYTHONPATH 제거, .venv-voice 켜기, 키 읽기: ~/.config/pinch_khu/env → voice/chatkhu_key.env (키는 출력하지 않음)
 ```
 
 마이크·스피커에는 시스템 `libportaudio2`가 필요하다.

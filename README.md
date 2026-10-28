@@ -7,7 +7,8 @@
 
 ## 작업 규칙
 
-- API 키, 개인정보, 녹음·대화 기록은 절대 올리지 않습니다(키는 저장소 밖 `~/.config/pinch_khu/env`).
+- ChatKHU 키는 2026-10-28 저장소 주인 결정으로 `voice/chatkhu_key.env`에 들어 있습니다. **저장소를 공개로 바꾸지 않습니다.** 키가 새면 재발급하고 그 파일을 바꿉니다(이전 키는 git 이력에 남습니다).
+- 개인정보, 녹음·대화 기록은 올리지 않습니다.
 - 현장 배치(카메라·표지·로봇)를 바꾸면 다시 보정하고, 바뀐 보정 파일을 함께 커밋합니다.
 - 각자 브랜치에서 작업하고, 합칠 때는 Pull Request를 올립니다. 브랜치 이름은 무엇을 만들었는지 알 수 있게 짓습니다.
 
@@ -22,7 +23,7 @@
 | 로봇 받침 | 180 × 180 × 20 mm 판. 판 가운데가 J1 축입니다. 시뮬은 테이블면을 z = 0으로 씁니다 |
 | 카메라 | Orbbec Astra Pro, **거꾸로 달아서**(`rotate_180`) 작업 영역을 0.6 m 넘게 떨어져 내려다봄 |
 | 정합 확인 표지 | ArUco 4x4 **5번, 50 mm** 하나. 중심은 로봇 기준 (−0.130, 0.055) m, 책상면 (`pac_vision/config/markers.yaml`) |
-| 음성 | 마이크·스피커(노트북 내장으로 확인), ChatKHU 키 `BAZE_API_KEY` (없으면 키보드·마우스·화면 버튼으로 시연) |
+| 음성 | 마이크·스피커(노트북 내장으로 확인). ChatKHU 키는 저장소에 있음(`voice/chatkhu_key.env`) |
 | 브라우저 | Google Chrome (웹 모니터를 앱 창으로 띄움, 없으면 Firefox) |
 
 다른 U2D2를 쓰면 `manipulator_control_ws/config/robot.yaml`의 `bus.port`를 `ls /dev/serial/by-id/`에 나온 이름으로 바꿉니다. 이 프로그램은 다른 장치를 자동으로 고르지 않습니다.
@@ -47,8 +48,7 @@ git clone https://github.com/jaemin0319/26_project_manipulator.git    # 비공�
 cd 26_project_manipulator
 ./setup.sh --system     # apt 패키지, Astra udev, dialout·plugdev 그룹, Chrome (sudo, 컴퓨터마다 한 번)
                         # 그룹이 새로 들어갔으면 로그아웃 후 다시 로그인
-./setup.sh              # 가상환경 3개(lock 파일의 정확한 버전) + Astra 드라이버(고정 커밋) + 전체 시험 (약 6분)
-nano ~/.config/pinch_khu/env     # "# BAZE_API_KEY=" 줄의 # 을 지우고 키를 적음 (권한 600 유지, 키는 출력하지 않음)
+./setup.sh              # 가상환경 3개(lock 파일의 정확한 버전) + Astra 드라이버(고정 커밋) + 전체 시험 (약 5분)
 ```
 
 `setup.sh`가 끝에 보여 주는 시험 결과: 실물 제어 152, 시뮬레이터 174(실물 연결 e2e 포함), pac_vision 131, 경로 편집 110, 음성 16 — 모두 passed여야 합니다. 하드웨어 없이 돌아가는 시험입니다.

@@ -11,7 +11,7 @@
 #   .venv-voice                   음성(쿠옹이)
 #   manipulator_control_ws/.venv  실물 팔 제어
 #   vendor/ros2_astra_camera      Orbbec OpenNI2 redist (빌드하지 않고 .so만 쓴다)
-#   ~/.config/pinch_khu/env       ChatKHU 키 자리 (없을 때만, 권한 600, 키는 직접 적는다)
+# ChatKHU 키는 저장소의 voice/chatkhu_key.env (개인 파일 ~/.config/pinch_khu/env가 있으면 그쪽이 먼저)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -108,16 +108,17 @@ so="$A/astra_camera/openni2_redist/x64/libOpenNI2.so"
 [ -f "$so" ] && echo "  $so" || { echo "libOpenNI2.so가 없어요: $so" >&2; exit 1; }
 
 # ------------------------------------------------------------------------------------------------ key file
-step "ChatKHU 키 파일 자리: ~/.config/pinch_khu/env"
+step "ChatKHU 키 (값은 출력하지 않아요)"
 envf="${PINCH_KHU_ENV:-$HOME/.config/pinch_khu/env}"
-if [ -f "$envf" ]; then
+repo_key="$ROOT/voice/chatkhu_key.env"
+chmod 600 "$repo_key" 2>/dev/null || true          # git은 권한 600을 기억하지 않는다
+if [ -f "$envf" ] && grep '^BAZE_API_KEY=.\+' "$envf" >/dev/null; then
   chmod 600 "$envf"
-  grep -q '^BAZE_API_KEY=.\+' "$envf" && echo "  키 있음 (값은 출력하지 않아요)" || echo "  파일은 있지만 BAZE_API_KEY= 줄이 비어 있어요: 직접 적어 주세요"
+  echo "  개인 키 파일을 써요: $envf (저장소 키보다 먼저)"
+elif [ -f "$repo_key" ] && grep '^BAZE_API_KEY=.\+' "$repo_key" >/dev/null; then
+  echo "  저장소의 키를 써요: voice/chatkhu_key.env"
 else
-  mkdir -p "$(dirname "$envf")" && chmod 700 "$(dirname "$envf")"
-  umask 077
-  printf '# 쿠옹이(ChatKHU) 키. 저장소 밖 파일이며 권한 600을 유지한다. 아래 줄의 # 을 지우고 키를 적는다.\n# BAZE_API_KEY=\n' > "$envf"
-  echo "  만들었어요: $envf (키를 직접 적어 주세요. 키가 없으면 음성 대신 키보드·마우스·버튼으로 시연)"
+  echo "  키 없음: voice/chatkhu_key.env 또는 $envf 에 BAZE_API_KEY=... 한 줄 (없으면 음성 대신 키보드·마우스·버튼으로 시연)"
 fi
 
 # ------------------------------------------------------------------------------------------------ tests
