@@ -1,9 +1,10 @@
-# 핀치·쿠옹이·MuJoCo 시연: 설치부터 실행까지 (`~/pinch_khu_ws`)
+# 핀치·쿠옹이·MuJoCo·실물 팔 시연: 설치부터 실행까지
 
 이 문서만 따라 하면 다른 노트북에서도 같은 시연을 재현할 수 있게 썼다. 명령은 2026-10-23 연구실 노트북(Ubuntu 24.04.5, Python 3.12.3, ROS 2 Jazzy 설치됨, NVIDIA RTX 5060 + Wayland)에서 실행해 본 것이다. 그 노트북에서 확인하지 못한 단계는 **미확인**으로 따로 표시했다(맨 아래 "확인 범위").
 
-- 범위: **MuJoCo 시뮬레이터 전용.** 실제 로봇은 움직이지 않는다. 검증·좌표는 시뮬레이터 모델 기준이며 실물 로봇의 동작 가능성을 보증하지 않는다.
-- **컴퓨터마다, 카메라를 놓을 때마다 보정을 새로 한다.** 다른 사람의 `pose.yaml`, `cam2base.yaml`, `markers.yaml`을 가져다 쓰지 않는다(시뮬레이터가 다른 카메라·다른 설정의 보정은 거부한다).
+- **빠른 길:** 저장소 맨 위 [README.md](../README.md)의 `./setup.sh`와 `./run_demo.sh`. 이 문서는 그 스크립트가 하는 일을 한 단계씩 풀어 쓴 것과 보정·문제 해결이다.
+- 범위: 시뮬레이터만으로도 시연한다. 실물 팔(`--real-arm`, 7-1절)은 2026-10-28에 처음 실기로 돌렸다(가는 길·돌아오는 길 DONE, `manipulator_control_ws/CURRENT_STATE.md`).
+- **현장 보정값은 저장소에 들어 있다** (2026-10-28 사용자 결정): `pac_vision/config/{cam2base,pose,markers,robot_pose,local}.yaml`은 지금 시연 배치(책상·Astra·5번 표지·로봇 판)의 결과다. 같은 배치로 옮기면 다른 컴퓨터에서도 그대로 쓴다. **카메라·표지·로봇을 옮겼으면 6절대로 다시 보정해서 덮어쓴다** (시뮬레이터는 시작할 때와 실행 중에 표지로 정합을 다시 확인하고, 어긋나면 3D 핀치를 막는다).
 - 설계와 결정 근거: [PINCH_KHU_INTEGRATION_PLAN.md](PINCH_KHU_INTEGRATION_PLAN.md) (계획서 원문, 구현 중 코드에 맞춰 바로잡은 점은 이 문서 "계획과 달라진 점"에 있다).
 
 ## 0. 시연 흐름 (사용자가 보는 것)
@@ -15,17 +16,17 @@
 5. **"수정 완료" / "이 경로로 할게"** → 쿠옹이가 **"검증 후 이동할까요?"** → **"어"**(호출어 없이) → 검증 → 실패면 빨간 점과 이유, 수정 모드로 복귀 → 통과면 "검증을 통과했어요. 이동을 시작할게요."와 함께 그 경로로 이동. "아니"면 수정 모드 그대로. 언제든 **X 키** 또는 "멈춰".
 6. (별도 단계) **G 키** 또는 "쿠옹아, 이 물체로 목표 바꿔 줘" → 카메라가 본 책상 위 물체 위로 목표가 바뀌고 새 경로가 생긴다.
 
-## 1. 저장소와 작업 브랜치
+## 1. 저장소
 
 ```bash
-mkdir -p ~/pinch_khu_ws && cd ~/pinch_khu_ws
-git clone https://github.com/jaemin0319/26_project_manipulator.git      # 비공개: gh auth login 먼저
+git clone https://github.com/jaemin0319/26_project_manipulator.git      # 비공개: gh auth login 먼저. --depth를 쓰지 않는다
 cd 26_project_manipulator
-git switch work/pinch-khu-demo        # 원격에 올라간 뒤. 올리기 전이면 이 노트북의 로컬 브랜치뿐이다
 ```
 
-- 기준: `chatkhu/voice-mujoco-path-edit`(c4058e4)에서 만든 `work/pinch-khu-demo`. 다른 원격 브랜치는 그대로 두고 병합하지 않았다(근거: 계획서 §1).
-- `main`에 직접 올리지 않는다. 이미 저장소가 있으면 `git status`로 변경 사항을 먼저 확인하고 덮어쓰지 않는다.
+- 어느 폴더에 받아도 된다. 저장소 안의 모든 경로는 저장소 기준이다(실물 제어 `manipulator_control_ws/`, Astra 드라이버 `vendor/`).
+- **얕은 클론(`--depth`)은 쓰지 않는다:** 실물 제어의 모델 사본은 이 저장소의 커밋(`model.UPSTREAM_COMMIT`)에 묶여 있고, 시험이 그 커밋과 지금 모델을 비교한다.
+- 2026-10-28부터 `main` 하나만 둔다(그 전 브랜치들은 정리됨).
+- 아래 명령의 `$REPO`는 받은 저장소 폴더다: `export REPO=$(pwd)` (저장소 폴더에서).
 
 ## 2. 시스템 패키지 (한 번, 관리자 비밀번호 필요)
 
@@ -47,28 +48,30 @@ sudo apt install -y git python3.12-venv python3-pip libportaudio2 fonts-noto-cjk
 
 ## 3. Astra 드라이버와 USB 권한
 
+`./setup.sh`가 드라이버를 받고, `./setup.sh --system`이 udev·그룹까지 한다. 손으로 할 때:
+
 ```bash
-mkdir -p ~/pinch_khu_ws/vendor
-git clone --depth 1 https://github.com/orbbec/ros2_astra_camera.git ~/pinch_khu_ws/vendor/ros2_astra_camera   # 드라이버 파일만 씀 (빌드 안 함, 약 9 MB)
-cat > ~/pinch_khu_ws/26_project_manipulator/pac_vision/config/local.yaml <<'EOF'
-camera:
-  openni:
-    redist: ~/pinch_khu_ws/vendor/ros2_astra_camera/astra_camera/openni2_redist/x64
-EOF
+# 드라이버 파일만 씀 (빌드 안 함). 고정 커밋 f7e71d9 (2026-10-23에 받은 것)
+mkdir -p vendor/ros2_astra_camera && cd vendor/ros2_astra_camera && git init -q
+git remote add origin https://github.com/orbbec/ros2_astra_camera.git
+git fetch --depth 1 origin f7e71d9ce806e788cb48d8580aac2c778fba4214 && git checkout FETCH_HEAD && cd ../..
+# 설정은 $PINCH_KHU_ROOT/vendor/ros2_astra_camera/astra_camera/openni2_redist/x64 를 가리킨다 ($PINCH_KHU_ROOT = 저장소 폴더)
 echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2bc5", MODE="0660", GROUP="plugdev"' | sudo tee /etc/udev/rules.d/99-orbbec.rules
 sudo udevadm control --reload-rules && sudo udevadm trigger      # 그다음 카메라를 뽑았다 다시 꽂는다
 groups | grep -q plugdev || echo "plugdev 그룹이 아님: sudo usermod -aG plugdev $USER 후 다시 로그인"
 ```
 
 - 우분투 `libopenni2-0`의 드라이버는 PS1080(키넥트류)뿐이라 Astra에는 Orbbec redist(`liborbbec.so`)가 필요하다.
-- `local.yaml`은 git 제외 파일이다(이 컴퓨터 경로).
+- 드라이버를 다른 곳에 두었으면 `pac_vision/config/local.yaml`의 `camera.openni.redist`를 그 폴더로 바꾼다.
 
-## 4. 파이썬 환경 두 개 (시뮬레이터 / 음성)
+## 4. 파이썬 환경 세 개 (시뮬레이터 / 음성 / 실물 제어)
 
-ROS 2를 `~/.bashrc`에서 source하면 `PYTHONPATH`에 ROS 패키지가 섞인다. 아래 `env.sh` 두 개가 그 경로를 빼고 각자의 가상환경을 켠다. 두 환경을 섞지 않는다(시뮬레이터는 numpy 1.26, 음성은 numpy 2.x).
+`./setup.sh`가 세 환경을 lock 파일의 정확한 버전으로 만들고 전체 시험까지 돌린다. 아래는 그 내용이다.
+
+ROS 2를 `~/.bashrc`에서 source하면 `PYTHONPATH`에 ROS 패키지가 섞인다. 각 `env.sh`가 그 경로를 빼고 자기 가상환경을 켠다. 환경을 섞지 않는다(시뮬레이터는 numpy 1.26, 음성은 numpy 2.x).
 
 ```bash
-cd ~/pinch_khu_ws/26_project_manipulator/mujoco_sim
+cd mujoco_sim                                 # 저장소 폴더에서
 python3 -m venv .venv
 source scripts/env.sh                         # ROS PYTHONPATH 제거 + .venv 켜기
 pip install -r requirements.lock              # mujoco 3.15.0, numpy 1.26.4, opencv-python 4.11
@@ -76,15 +79,19 @@ python -m pinch_sim.build_scene               # 로봇 장면 생성 (저장소�
 pip install --no-deps mediapipe==0.10.21      # 이 두 줄 그대로 (그냥 깔면 numpy 2가 들어와 깨진다)
 pip install -r requirements-hand.txt          # "mediapipe requires jax / opencv-contrib" 경고는 정상
 pip install -r requirements-astra.txt         # pac_vision(-e) + openni 2.3.0
-python -m pytest -q                           # 148 passed (약 2~3분)
-(cd ../pac_vision && python -m pytest -q)     # 103 passed
+python -m pytest -q                           # 174 passed (약 4분, 실물 연결 e2e 포함: 실물 제어 환경이 먼저 있어야 함)
+(cd ../pac_vision && python -m pytest -q)     # 131 passed
 (cd "../path 편집" && python -m pytest -q)    # 110 passed
 deactivate
+cd ..
 
-cd ~/pinch_khu_ws/26_project_manipulator
 python3 -m venv .venv-voice
-.venv-voice/bin/pip install -r voice/requirements.txt pytest
-(source voice/env.sh; python -m pytest -q voice/tests)    # 13 passed
+.venv-voice/bin/pip install -r voice/requirements.lock
+(source voice/env.sh; python -m pytest -q voice/tests)    # 17 passed
+
+cd manipulator_control_ws
+python3 -m venv .venv && source scripts/env.sh
+pip install -r requirements.lock && python -m pytest -q   # 152 passed (가짜 서보)
 ```
 
 ChatKHU 키는 저장소 밖 파일에만 둔다(값을 터미널 기록에 남기지 않도록 편집기로 넣는다):
@@ -111,7 +118,7 @@ amixer -c 1 sset 'Internal Mic Boost' 0     # 노트북 내장 마이크 증폭 
 ## 5. 카메라 확인
 
 ```bash
-cd ~/pinch_khu_ws/26_project_manipulator/pac_vision && source ../mujoco_sim/scripts/env.sh
+cd "$REPO/pac_vision" && source ../mujoco_sim/scripts/env.sh
 lsusb | grep -i 2bc5                                    # Orbbec 장치
 for d in /sys/class/video4linux/video*; do echo "$d: $(cat $d/name)"; done
 python scripts/check_setup.py                           # 보정 전에는 pose.yaml·cam2base.yaml ⚠️가 정상
@@ -204,7 +211,7 @@ p_world = R_z(90° − yaw) · (p_base − (x, y, 0))   MuJoCo world (x, y = 로
 **터미널 1: 시뮬레이터**
 
 ```bash
-cd ~/pinch_khu_ws/26_project_manipulator/mujoco_sim && source scripts/env.sh
+cd "$REPO/mujoco_sim" && source scripts/env.sh
 
 # (가) Astra 전부: 실제 영상 + 손(가리키기·3D 핀치) + 음성 + 카메라 목표(G)
 python -m pinch_sim.app --calib ../pac_vision/config/cam2base.yaml --video auto --hand --depth --voice-gateway \
@@ -231,7 +238,7 @@ python -m pinch_sim.app --target-r 0.275 --target-deg 10 --canvas --hand 0 --voi
 **터미널 2: 쿠옹이**
 
 ```bash
-cd ~/pinch_khu_ws/26_project_manipulator && source voice/env.sh
+cd "$REPO" && source voice/env.sh
 python -m voice --sim             # 마이크
 python -m voice --sim --text      # 키보드로 문장 입력 (같은 ChatKHU, 같은 함수)
 python -m voice --list-mics       # 마이크 목록, --mic 번호로 고름
@@ -254,9 +261,9 @@ python -m voice --list-mics       # 마이크 목록, --mic 번호로 고름
 
 호출어 규칙: "쿠옹아"를 부른 뒤 30초 동안 호출어 없이 말해도 된다. 이 시간은 명령이 실제로 실행되거나 손으로 고칠 때만 늘어난다. 쿠옹이(앱)가 질문하면("계속 갈까요, 돌아갈까요?") 그 질문의 답 **한 번**은 호출어 없이 받는다. 답이 될 수 있는 명령만 실행하고(예: 계속 가 / 돌아가), "아니"나 엉뚱한 말에는 아무것도 움직이지 않는다. 멈춤은 언제나 받는다.
 
-## 7-1. 실물 팔로 실행 (`--real-arm`, `~/manipulator_control_ws` 연동)
+## 7-1. 실물 팔로 실행 (`--real-arm`, `manipulator_control_ws/` 연동)
 
-시뮬이 검증한 궤적을 실물이 **같은 시간표로** 따라간다. 실물은 `~/manipulator_control_ws`의 제어 프로그램(별도 venv)이 맡고, 시뮬은 소켓으로 궤적을 보낸다.
+시뮬이 검증한 궤적을 실물이 **같은 시간표로** 따라간다. 실물은 저장소 안 `manipulator_control_ws/`의 제어 프로그램(별도 venv)이 맡고, 시뮬은 소켓으로 궤적을 보낸다. `./run_demo.sh real`(검사만: `check`)이 아래 순서대로 창을 띄운다.
 
 **준비 (한 번)**
 - 로봇 캘리브레이션: `python -m manipulator_control calibrate` (그 작업공간 README). 12 V 전원을 다시 켰으면 다시 한다.
@@ -268,14 +275,14 @@ python -m voice --list-mics       # 마이크 목록, --mic 번호로 고름
 **실행 순서**
 1. 터미널 A (실물, 팔 옆에서, 12 V 스위치에 손):
    ```bash
-   cd ~/manipulator_control_ws && source scripts/env.sh
+   cd manipulator_control_ws && source scripts/env.sh
    python -m manipulator_control calibration-status   # 저장된 보정을 쓸 수 있는지 (읽기 전용)
    python -m manipulator_control pinch                # 보정 검증 → HOME 미리보기 y → HOME → "시뮬 연결 대기"
    ```
 2. 터미널 B (시뮬):
    ```bash
-   cd ~/pinch_khu_ws/26_project_manipulator/mujoco_sim && source scripts/env.sh
-   python -m pinch_sim.app --real-arm --calib ../pac_vision/config/cam2base.yaml --video auto --voice-gateway
+   cd mujoco_sim && source scripts/env.sh
+   python -m pinch_sim.app --real-arm --calib ../pac_vision/config/cam2base.yaml --video auto --hand --depth --voice-gateway
    ```
 3. 터미널 A에 "시뮬 연결됨 … y = 무장"이 뜨면 실물 주변을 확인하고 **y**를 누른다. 이후로는 시뮬 승인(Y 키, "수정 완료" → "어")이 실물을 움직인다.
 4. 터미널 C: 쿠옹이 (7절과 같음).
@@ -370,7 +377,9 @@ python -m voice.sim_dryrun        # 한 줄에 하나: start_edit / move_region 
 
 ## 11. git에 올리지 않는 것
 
-키(`~/.config/pinch_khu/env`, 저장소 밖), 이 컴퓨터·이 카메라 값(`pac_vision/config/{local,pose,cam2base,markers,markers.check,robot_pose}.yaml`, `data/sessions/`), 실행 기록(`mujoco_sim/logs/`, `voice/logs/` — 대화 내용 포함), 저장 경로(`mujoco_sim/saved_paths/`), 가상환경, `vendor/`(저장소 밖). 커밋 전 `git status`로 확인한다.
+키(`~/.config/pinch_khu/env`, 저장소 밖), 보정 원자료와 확인 결과(`pac_vision/data/sessions/`, `markers.check.yaml`, `*.bak` — 카메라 영상·장치 번호), 실물 서보 보정(`manipulator_control_ws/runtime/` — 12 V를 껐다 켜면 무효라 컴퓨터마다 `calibrate`), 실행 기록(`mujoco_sim/logs/`, `voice/logs/` — 대화 내용 포함, `manipulator_control_ws/logs/`), 저장 경로(`mujoco_sim/saved_paths/`), 가상환경, `vendor/`(setup.sh가 받음). 커밋 전 `git status`로 확인한다.
+
+지금 시연 배치의 현장 값(`pac_vision/config/{cam2base,pose,markers,robot_pose,local}.yaml`)은 2026-10-28부터 **올린다**(맨 위 참고).
 
 ## 12. 계획과 달라진 점 (코드 기준으로 바로잡음)
 
