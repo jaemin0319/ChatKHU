@@ -140,6 +140,6 @@
   </sensor>
 
   <keyframe>
-    <key name="ready" qpos="0 0.641283 1.31236 -0.899717 -1.5708 -0.139769"/>
+    <key name="ready" qpos="0 0.822469 1.68032 -0.712947 -1.5708 -0.139769"/>
   </keyframe>
 </mujoco>

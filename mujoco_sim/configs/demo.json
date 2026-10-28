@@ -59,19 +59,19 @@
     "tcp_m": [
       0.094294,
       0.100206,
-      0.27
+      0.22
     ],
     "tool_axis": [
       0.0,
       0.0,
       -1.0
     ],
-    "_note": "Home in joint space: Revolute_1 = 0 (J2 axis = world +X), Revolute_6 = -0.139769 (keeps the gripper roll visible); 2026-10-11 lowered 5 cm in z (J2..J5 re-solved with J1, J6 locked). tcp_m = FK of q_rad, checked at build time. 2026-10-28: the robot stands on the 20 mm plate (mount), same q_rad -> tcp_m z 0.25 -> 0.27 (table frame).",
+    "_note": "Home in joint space: Revolute_1 = 0 (J2 axis = world +X), Revolute_6 = -0.139769 (keeps the gripper roll visible); 2026-10-11 lowered 5 cm in z (J2..J5 re-solved with J1, J6 locked). tcp_m = FK of q_rad, checked at build time. 2026-10-28: the robot stands on the 20 mm plate (mount), same q_rad -> tcp_m z 0.25 -> 0.27 (table frame). 2026-10-28 user: lowered 5 cm again, z 0.27 -> 0.22 (J2..J5 re-solved with J1, J6 locked; was [0, 0.641283, 1.312362, -0.899717, -1.570796, -0.139769]); 0 contacts, self clearance 11.8 mm, floor 43.6 mm. The real arm's HOME (robot.yaml home.q_rad) is -1 x this.",
     "q_rad": [
       0.0,
-      0.641283,
-      1.312362,
-      -0.899717,
+      0.822469,
+      1.680318,
+      -0.712947,
       -1.570796,
       -0.139769
     ]
