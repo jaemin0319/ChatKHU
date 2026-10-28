@@ -4,7 +4,7 @@ camera:
   rgb:
     device: 2                         # RGB 장치 번호. 없으면 이름(name_match)으로 자동 탐색
   openni:
-    redist: ~/ros2_astra_camera/astra_camera/openni2_redist/x64   # libOpenNI2.so가 있는 폴더
+    redist: $PINCH_KHU_ROOT/vendor/ros2_astra_camera/astra_camera/openni2_redist/x64   # libOpenNI2.so가 있는 폴더
   ui:
     font: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc  # 한글 글꼴 (없으면 영어 문구)
 detect:

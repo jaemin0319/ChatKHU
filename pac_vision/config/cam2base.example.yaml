@@ -26,7 +26,7 @@ desk_z:
     n: 18523}
 session_file: data/sessions/2026-10-02_1530.npz
 camera:
-  openni: {redist: ~/ros2_astra_camera/astra_camera/openni2_redist/x64}
+  openni: {redist: $PINCH_KHU_ROOT/vendor/ros2_astra_camera/astra_camera/openni2_redist/x64}
   rgb: {device: 2, width: 640, height: 480}
   depth: {width: 640, height: 480, fx: 570.0, fy: 570.0, cx: 320.0, cy: 240.0, z_offset_m: -0.021,
     flip: true, min_m: 0.6, max_m: 4.0}

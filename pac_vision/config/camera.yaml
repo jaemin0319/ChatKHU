@@ -7,9 +7,10 @@
 rotate_180: false
 
 openni:
-  # Orbbec OpenNI2 redist 폴더 (libOpenNI2.so가 있는 곳). ~ 는 홈 폴더로 바뀐다.
-  # ⚠️ 컴퓨터마다 다름: 다르면 이 파일을 고치지 말고 config/local.yaml에 openni.redist를 적는다
-  redist: ~/ros2_astra_camera/astra_camera/openni2_redist/x64
+  # Orbbec OpenNI2 redist 폴더 (libOpenNI2.so가 있는 곳). ~ 는 홈 폴더, $PINCH_KHU_ROOT는 이 저장소 폴더다.
+  # 저장소 맨 위의 setup.sh가 vendor/ros2_astra_camera(고정 커밋)를 받아 둔다. 다른 곳에 두었으면
+  # 이 파일을 고치지 말고 config/local.yaml에 openni.redist를 적는다
+  redist: $PINCH_KHU_ROOT/vendor/ros2_astra_camera/astra_camera/openni2_redist/x64
 
 rgb:
   # 장치 번호는 컴퓨터마다 다르다. 여기 적지 않으면 /sys/class/video4linux/*/name에 name_match가 들어간 장치 중

@@ -136,6 +136,11 @@ def has_pose(config_dir: str | os.PathLike | None = None) -> bool:
     return (d / "pose.yaml").exists()
 
 
+# 저장소 맨 위 폴더 (pac_vision/src/pac_vision/config.py에서 세 단계 위). 설정 파일에서 $PINCH_KHU_ROOT로 쓴다.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
 def expand_path(p: str) -> str:
-    """설정 파일의 ~ 와 환경변수를 실제 경로로."""
+    """설정 파일의 ~ 와 환경변수를 실제 경로로. $PINCH_KHU_ROOT는 따로 정하지 않으면 이 저장소 폴더다."""
+    os.environ.setdefault("PINCH_KHU_ROOT", str(REPO_ROOT))
     return os.path.expandvars(os.path.expanduser(str(p)))

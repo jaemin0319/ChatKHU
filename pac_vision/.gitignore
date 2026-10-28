@@ -6,16 +6,11 @@ __pycache__/
 build/
 dist/
 
-# 현장에서 생성되는 파일 (형식 예시는 config/cam2base.example.yaml)
-config/cam2base.yaml
-config/local.yaml
-config/pose.yaml
-config/pose.yaml.bak
-config/robot_pose.yaml.bak
-config/markers.yaml.bak
-config/markers.yaml
+# 현장 값 중 지금 시연 배치의 결과(cam2base, pose, markers, robot_pose, local)는 저장소에 넣는다 (2026-10-28 사용자 결정:
+# 같은 책상·카메라·표지 배치면 다른 컴퓨터에서도 보정 없이 실행). 배치를 바꾸면 다시 보정해서 덮어쓴다.
+# 백업과 확인 결과(장치 번호·USB 경로가 들어감)는 올리지 않는다.
+config/*.bak
 config/markers.check.yaml
-config/robot_pose.yaml
 data/sessions/*
 !data/sessions/.gitkeep
 # YOLO 가중치 (실행 시 자동으로 내려받음)
