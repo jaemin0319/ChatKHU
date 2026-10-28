@@ -14,6 +14,9 @@ from pinch_sim.model import ROOT, config_sha, file_sha, load_config, load_scene,
 from pinch_sim.real_arm import DEFAULT_ROBOT_YAML, RealArm, apply_profile, hello
 from pinch_sim.session import Session
 from pinch_sim.targets import make_target, precheck, sample_target
+from pinch_sim.ui import notice_text
+from pinch_sim.voice_gateway import Dispatcher
+from pinch_sim.webui import menu_state
 
 pytestmark = pytest.mark.skipif(not DEFAULT_ROBOT_YAML.exists(), reason="no ~/manipulator_control_ws robot.yaml")
 
@@ -232,6 +235,26 @@ def test_v_and_y_need_the_armed_arm(real):
     fake.set("HOLDING", d.qpos[s.idx.qpos])
     assert not s.cmd_approve(d) and "무장" in s.message
     assert s.status()["real_arm"]["gate"]
+
+
+def test_not_armed_is_told_as_not_armed_not_as_a_failed_validation(real):
+    s, d, fake = session_on(real, state="ARM_CONFIRM")
+    events = []
+    s.listeners.append(events.append)
+    assert s.cmd_fixed_target(0.275, 20.0, d)
+    req = {"v": 1, "type": "command", "request_id": "r1", "command": "use_current_path", "expected_rev": s.rev,
+           "deadline_unix": None, "auto_run": True}
+    res = Dispatcher().handle(s, d, req)
+    assert not res["accepted"] and res["reason_code"] == "ARM_NOT_ARMED" and s.state == "GENERATED"
+    assert "y를 눌러" in notice_text(events[-1], s)                  # the screen says what to do, not "failed"
+    assert s.cmd_select() and menu_state(s)["chip"] == {"text": "실물 무장 대기", "icon": "warning"}
+    assert not s.cmd_validate(d) and "y를 눌러" in notice_text(events[-1], s)
+    fake.up, fake.down_reason = False, "gone"
+    res = Dispatcher().handle(s, d, dict(req, request_id="r2", expected_rev=s.rev))
+    assert res["reason_code"] == "ARM_DISCONNECTED" and menu_state(s)["chip"]["text"] == "로봇 연결 끊김"
+    fake.up = True
+    fake.set("ARMED", d.qpos[s.idx.qpos])
+    assert menu_state(s)["chip"]["text"] == "검증 대기"
 
 
 def test_moved_arm_invalidates_the_approval(real):

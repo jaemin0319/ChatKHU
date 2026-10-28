@@ -60,6 +60,10 @@ QUESTION_FUNCTIONS = {
     ASK_RUN: frozenset({'validate_and_move'}),
 }
 EDIT_GUIDE = '경로 수정 후 수정 완료를 말해 주세요.'   # 수정 모드가 실제로 켜진 뒤 (가는 길·돌아오는 길 모두)
+ARM_SAY = {   # 실물 팔(pinch_sim --real-arm)이 검증·이동을 받지 않는 이유: 검증 실패가 아니다
+    'ARM_NOT_ARMED': '실물 로봇팔이 아직 무장 전이에요. 실물 제어 창에서 y를 눌러 주세요.',
+    'ARM_DISCONNECTED': '실물 로봇팔과 연결되어 있지 않아요.',
+}
 MOVE_START = '이동을 시작할게요.'
 PASSED_MOVE = '검증을 통과했어요. 이동을 시작할게요.'
 PASSED_WAIT = '검증을 통과했어요. Y 버튼을 누르면 이동해요.'
@@ -222,6 +226,8 @@ class SimEditor:
             last = (st.get('last_exec') or {}).get('phase')
             code = {'DONE': 'ARRIVED_TARGET' if last == 'outbound' else 'ARRIVED_HOME',
                     'ABORTED': 'STOPPED', 'EXECUTING': 'MOVING', 'VALIDATING': 'VALIDATING'}.get(st.get('state'), code)
+        if code in ARM_SAY:                    # 정해진 문장 그대로 말한다 (모델이 "검증에 실패했어요"로 바꾸지 않게)
+            return {'status': 'failed', 'reason': code.lower(), 'say': ARM_SAY[code]}
         return {'status': 'failed', 'reason': code.lower()}
 
     def hint(self, text: str) -> None:
@@ -296,6 +302,10 @@ class SimEditor:
         state = self.status.get('state')
         if state == 'FAILED':                  # 실패한 뒤 고치지 않은 그 경로 (고치면 상태가 바뀐다)
             return {'status': 'failed', 'reason': 'path_failed'}
+        arm = self.status.get('real_arm') or {}
+        if arm.get('gate') and state not in ('EXECUTING', 'VALIDATING', 'DONE', 'ABORTED'):
+            # 실물이 무장 전이면 검증·이동을 받지 않는다: 묻지 않고 그 이유를 말한다
+            return self._refusal({'reason_code': 'ARM_NOT_ARMED' if arm.get('up') else 'ARM_DISCONNECTED'})
         if state in ('EXECUTING', 'VALIDATING', 'DONE', 'ABORTED'):
             return self._refusal({'reason_code': 'NOT_ALLOWED', 'status': self.status})
         self.announcements.put(ASK_RUN)

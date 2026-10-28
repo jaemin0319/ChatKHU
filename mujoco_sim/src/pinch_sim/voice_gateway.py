@@ -214,6 +214,11 @@ class Dispatcher:
     @staticmethod
     def _use_current_path(s, d, rid, auto_run=True):
         st = s.state
+        arm = getattr(s, "real_arm", None)
+        if st in ("GENERATED", "SELECTED", "PASSED") and arm is not None and (why := arm.gate()):
+            # V / Y would refuse it anyway: say why (not armed yet is not a failed validation)
+            s._emit(f"use path refused: {why}", "refused")
+            return False, ("ARM_NOT_ARMED" if arm.up and arm.fresh() else "ARM_DISCONNECTED"), why
         if st == "GENERATED":
             if not s.cmd_select():
                 return False, "REFUSED", s.message

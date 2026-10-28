@@ -120,7 +120,9 @@
   - already_max: "이미 가장 많이, 8센티로 옮겼어요." / already_min: "이미 가장 조금, 2센티로 옮겼어요."
   - no_camera_target: "깊이 카메라 없이 켜져 있어서 카메라로 목표를 잡을 수 없어요." / calib_unverified: "카메라 정합이 확인되지 않아 카메라로 목표를 잡을 수 없어요."
   - no_depth: "깊이 영상을 받지 못했어요." / no_object: "책상 위에서 물체를 찾지 못했어요." / several_objects: "물체가 여러 개예요. 검지로 하나를 가리킨 채 다시 말씀해 주세요." / no_object_at_finger: "가리킨 곳에서 물체를 찾지 못했어요."
+  - arm_not_armed: "실물 로봇팔이 아직 무장 전이에요. 실물 제어 창에서 y를 눌러 주세요." / arm_disconnected: "실물 로봇팔과 연결되어 있지 않아요."
   - 그 밖: "지금은 할 수 없어요."
+- failed는 명령을 받지 않았다는 뜻이다. "검증에 실패했어요"는 시뮬레이터 알림으로 검증 실패가 왔을 때만 말한다.
 - status가 error이고 reason이 bad_distance이면 "한 번에 15센티까지만 옮길 수 있어요."라고만 말한다.
 - status가 blocked이면 함수는 실행되지 않았다:
   - reason이 no_wake_word: 먼저 "{wake_word}"라고 불러 달라고만 말한다.

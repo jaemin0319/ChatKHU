@@ -34,7 +34,9 @@ ACTIONS = ("step", "run", "stop", "confirm_run", "answer", "undo", "redo", "rese
 UI_COMMANDS = ("use_current_path", "resume", "edit_return", "return_reverse", "new_target", "save_paths")
 REFUSAL = {"STALE_REVISION": "방금 경로가 바뀌었어요. 다시 확인해 주세요.", "BUSY": "검증이나 이동 중이에요.",
            "BUSY_EXECUTING": "이동 중이에요.", "NOT_ALLOWED": "지금 상태에서는 할 수 없어요.",
-           "NO_PATH": "경로가 없어요.", "PATH_FAILED": "검증에 실패한 경로예요. 먼저 수정해 주세요."}
+           "NO_PATH": "경로가 없어요.", "PATH_FAILED": "검증에 실패한 경로예요. 먼저 수정해 주세요.",
+           "ARM_NOT_ARMED": "실물 로봇팔이 무장 전이에요. 실물 제어 창에서 y를 눌러 주세요.",
+           "ARM_DISCONNECTED": "실물 로봇팔과 연결되어 있지 않아요."}
 MAX_BODY = 64 * 1024
 JPEG_QUALITY = 82
 
@@ -73,6 +75,9 @@ def menu_state(session) -> dict:
     real = getattr(session, "real_arm", None)
     if real is not None and not real.up and st in ("PASSED", "EXECUTING", "ABORTED"):
         return out(3, "로봇 연결 끊김", "warning", True)
+    gate = getattr(real, "gate", None)
+    if gate is not None and st in ("SELECTED", "PASSED") and gate():     # V / Y are refused until the arm is armed
+        return out(2 if st == "SELECTED" else 3, "실물 무장 대기" if real.up else "로봇 연결 끊김", "warning")
     if path is None or st == "HOLD":
         return out(0, "경로 설정 전")
     if st in ("GENERATED", "SELECTED"):

@@ -79,7 +79,11 @@ def notice_text(ev, session) -> str | None:
     """Short Korean notice for Session events a button user would otherwise miss (None = no notice)."""
     k, msg, st = ev.kind, ev.message, ev.state
     if k == "refused":
-        rules = (("N ignored", "검증·이동 중에는 새 목표를 만들 수 없어요"),
+        if "실물이 무장 상태가 아님" in msg:                 # real_arm.gate(): V / Y / voice before the arm is armed
+            return "실물 로봇팔이 무장 전이에요. 실물 제어 창에서 y를 눌러 주세요"
+        if "실물 연결 끊김" in msg or "실물 상태가 최신이 아님" in msg:
+            return "실물 로봇팔과 연결되어 있지 않아요"
+        rules = (("N ignored","검증·이동 중에는 새 목표를 만들 수 없어요"),
                  ("S ignored: release", "드래그를 놓은 뒤 선택하세요"),
                  ("S ignored", f"선택할 경로가 없어요 ({KOREAN_STATE.get(st, st)})"),
                  ("V ignored", "먼저 경로를 선택(S)하세요" if st == "GENERATED" else
