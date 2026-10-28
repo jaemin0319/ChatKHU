@@ -336,7 +336,11 @@ def main(argv=None):
                     help="monitor: web = full-screen browser window (webui.py, Figma design 2026-10-28), cv = the "
                          "OpenCV side_cam window (progress strip, bubbles, button bar)")
     ap.add_argument("--browser", choices=("auto", "chrome", "firefox", "none"), default="auto",
-                    help="--ui web: which browser opens the monitor full screen (none: only print the URL)")
+                    help="--ui web: which browser opens the monitor (none: only print the URL)")
+    ap.add_argument("--browser-mode", choices=("window", "kiosk"), default="window",
+                    help="--ui web: a normal resizable window (default) or full screen without resizing")
+    ap.add_argument("--browser-size", default="1600x1000", metavar="WxH",
+                    help="--ui web, window mode: first window size in px (the page scales with the window)")
     ap.add_argument("--depth", action="store_true",
                     help="Astra depth (pac_vision, OpenNI2) for the hand: a pinch moves the grabbed point by the "
                          "hand's 3-D motion, 1:1 (needs --hand, --video and a real pac_vision --calib)")
@@ -550,10 +554,11 @@ def main(argv=None):
         session.listeners.append(lambda ev: alerts.on_event(ev, session))
         ui_dispatch = Dispatcher()                 # chips / "검증 후 이동": the voice protocol's commands and checks
         web = WebUI().start()
-        browser = open_browser(web.url, a.browser, mons[0] if mons else None)
+        bw, bh = (int(v) for v in a.browser_size.lower().split("x"))
+        browser = open_browser(web.url, a.browser, mons[0] if mons else None, a.browser_mode, (bw, bh))
         win_xy = (0, 0)
         print(f"web monitor: http://127.0.0.1:{web.port}/ (frame {layout.img_w}x{layout.img_h}, "
-              + (f"{a.browser} browser full screen)" if browser is not None else f"open {web.url})"), flush=True)
+              + (f"{a.browser} browser, {a.browser_mode})" if browser is not None else f"open {web.url})"), flush=True)
     else:
         # 16:10 camera image (render W x H, scaled), progress strip above, buttons below (ui.py)
         layout = auto_layout(cam_model.width, cam_model.height, a.side_scale, mons[0] if mons else None)

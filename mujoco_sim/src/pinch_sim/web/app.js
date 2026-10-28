@@ -88,11 +88,19 @@ video.addEventListener('contextmenu', (e) => {
   send({ type: 'mouse', kind: 'cancel', u: 0.5, v: 0.5 });
 });
 
+function toggleFullscreen() {         // F / the rail button; Esc (the browser's own) goes back to the window
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else document.documentElement.requestFullscreen().catch(() => {});
+}
+$('fullscreen').addEventListener('click', toggleFullscreen);
+document.addEventListener('fullscreenchange', () => setTimeout(reportSize, 300));
+
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') { if (e.key === 'Escape') e.target.blur(); return; }
   if (e.key === 'Escape') { closeDialog(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
   const k = e.key.length === 1 ? e.key.toUpperCase() : '';
+  if (k === 'F') { toggleFullscreen(); e.preventDefault(); return; }
   if (KEYS.includes(k)) { key(k); e.preventDefault(); }
 });
 
@@ -394,7 +402,7 @@ if (OPEN.includes('sidebar')) setSidebar(true);
 graphOpen = OPEN.includes('graph');
 startVideo();
 connect();
-const reportSize = () => act('viewport', { w: innerWidth, h: innerHeight });   // logged by the app (window check)
+function reportSize() { act('viewport', { w: innerWidth, h: innerHeight }); }   // logged by the app (window check)
 reportSize();
 let resizeTimer = null;
 addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(reportSize, 400); });

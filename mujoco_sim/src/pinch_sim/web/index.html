@@ -8,6 +8,7 @@
 </head>
 <body>
 <!-- camera image with the projected path (pinch_sim/webui.py /stream); mouse on it edits the path -->
+<div id="stage">
 <canvas id="backdrop" width="192" height="108"></canvas>
 <img id="video" alt="" draggable="false">
 <div id="video-wait" class="video-wait">카메라 화면을 기다리는 중이에요</div>
@@ -19,6 +20,10 @@
   <button class="rail-item" data-nav="chat" title="쿠챗"><img src="/static/assets/comment.svg" alt=""></button>
   <button class="rail-item" data-nav="saved" title="저장된 경로"><img src="/static/assets/route-small.svg" alt=""></button>
   <button class="rail-item" data-nav="recent" title="최근 대화"><img src="/static/assets/calendar-clock.svg" alt=""></button>
+  <button id="fullscreen" class="rail-item rail-full" title="전체 화면 (F) · 창 모드로 돌아가기 (Esc)">
+    <svg class="fs-enter" viewBox="0 0 24 24" fill="none" stroke="#707070" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+    <svg class="fs-exit" viewBox="0 0 24 24" fill="none" stroke="#707070" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+  </button>
   <button class="rail-item rail-settings" data-nav="settings" title="설정"><img src="/static/assets/settings.svg" alt=""></button>
 </nav>
 <button id="rail-open" class="circle-btn rail-open" title="메뉴 펼치기"><img src="/static/assets/button-back-open.svg" alt=""></button>
@@ -87,6 +92,7 @@
 <div id="actions" class="actions"></div>
 
 <div id="toasts" class="toasts"></div>
+</div>
 
 <div id="dialog-layer" class="dialog-layer hidden">
   <div class="dialog" role="alertdialog">

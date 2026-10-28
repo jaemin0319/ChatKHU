@@ -432,26 +432,33 @@ def _forget_window_size(profile: Path) -> None:
         prefs.write_text(json.dumps(doc), encoding="utf-8")
 
 
-def open_browser(url: str, kind: str = "auto", screen: tuple | None = None) -> subprocess.Popen | None:
-    """Full-screen window of its own (kiosk: no resizing; own profile, so it is a new process the app can watch:
-    closing it with Alt+F4 ends the app). screen: (x, y, w, h) of the monitor. kind: auto | chrome | firefox | none."""
+def open_browser(url: str, kind: str = "auto", screen: tuple | None = None, mode: str = "window",
+                 size: tuple[int, int] = (1600, 1000)) -> subprocess.Popen | None:
+    """A browser window of its own (own profile, so it is a new process the app can watch: closing it ends the app).
+    mode window: a normal resizable window of `size`, centred on `screen` (x, y, w, h of the monitor);
+    mode kiosk: full screen, no resizing (Alt+F4 / Q to end). kind: auto | chrome | firefox | none."""
     if kind == "none":
         return None
     profile = Path.home() / ".cache" / "pinch_sim" / "browser"
+    sx, sy, sw, sh = screen or (0, 0, 1920, 1080)
+    if mode == "kiosk":
+        place = ["--kiosk", f"--window-position={sx},{sy}", f"--window-size={sw},{sh}"]
+    else:
+        w, h = min(size[0], sw), min(size[1], sh)
+        place = [f"--window-position={sx + (sw - w) // 2},{sy + (sh - h) // 2}", f"--window-size={w},{h}"]
     chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
     if kind in ("auto", "chrome") and chrome:
         prof = Path(f"{profile}-chrome")
         prof.mkdir(parents=True, exist_ok=True)
         _forget_window_size(prof)
-        x, y, w, h = screen or (0, 0, 1920, 1080)
-        return subprocess.Popen([chrome, f"--app={url}", "--kiosk", f"--window-position={x},{y}",
-                                 f"--window-size={w},{h}", f"--user-data-dir={prof}",
+        return subprocess.Popen([chrome, f"--app={url}", *place, f"--user-data-dir={prof}",
                                  "--no-first-run", "--no-default-browser-check", "--disable-translate",
                                  "--password-store=basic", "--disable-session-crashed-bubble"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     firefox = shutil.which("firefox")
     if kind in ("auto", "firefox") and firefox:
         (Path(f"{profile}-firefox")).mkdir(parents=True, exist_ok=True)
-        return subprocess.Popen([firefox, "--new-instance", "--profile", f"{profile}-firefox", "--kiosk", url],
+        size_args = ["--kiosk"] if mode == "kiosk" else ["--width", str(min(size[0], sw)), "--height", str(min(size[1], sh))]
+        return subprocess.Popen([firefox, "--new-instance", "--profile", f"{profile}-firefox", *size_args, url],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return None
