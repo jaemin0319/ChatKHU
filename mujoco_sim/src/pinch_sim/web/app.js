@@ -394,3 +394,7 @@ if (OPEN.includes('sidebar')) setSidebar(true);
 graphOpen = OPEN.includes('graph');
 startVideo();
 connect();
+const reportSize = () => act('viewport', { w: innerWidth, h: innerHeight });   // logged by the app (window check)
+reportSize();
+let resizeTimer = null;
+addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(reportSize, 400); });

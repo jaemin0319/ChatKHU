@@ -30,7 +30,7 @@ import numpy as np
 STATIC_DIR = Path(__file__).resolve().parent / "web"
 KEYS = set("NSVYHXUROEGQ")
 MOUSE_KINDS = ("press", "move", "release", "cancel")
-ACTIONS = ("step", "run", "stop", "confirm_run", "answer", "undo", "redo", "reset")
+ACTIONS = ("step", "run", "stop", "confirm_run", "answer", "undo", "redo", "reset", "viewport")
 UI_COMMANDS = ("use_current_path", "resume", "edit_return", "return_reverse", "new_target", "save_paths")
 REFUSAL = {"STALE_REVISION": "방금 경로가 바뀌었어요. 다시 확인해 주세요.", "BUSY": "검증이나 이동 중이에요.",
            "BUSY_EXECUTING": "이동 중이에요.", "NOT_ALLOWED": "지금 상태에서는 할 수 없어요.",
@@ -179,6 +179,8 @@ def apply_action(session, d, act: dict, dispatcher) -> tuple[list[str], str]:
     """A browser action -> keys for the app's existing key path, or a command of the voice protocol (same Dispatcher,
     same checks: expected_rev is the state the user saw). Returns (keys, why it was refused or "")."""
     name = act["name"]
+    if name == "viewport":                                     # the page's size: only logged by the app
+        return [], ""
     if name == "step":                                         # the 4-step menu: start that step
         i = int(act.get("index", -1)) if str(act.get("index", "")).lstrip("-").isdigit() else -1
         if i == 2:
@@ -302,7 +304,7 @@ def parse_input(msg) -> dict | None:
         return {"type": "mouse", "kind": msg["kind"], "u": u, "v": v}
     if kind == "action" and msg.get("name") in ACTIONS:
         out = {"type": "action", "name": msg["name"]}
-        for k in ("index", "command", "rev"):
+        for k in ("index", "command", "rev", "w", "h"):
             if isinstance(msg.get(k), (int, str)) and not isinstance(msg.get(k), bool):
                 out[k] = msg[k]
         if isinstance(msg.get("fields"), dict):
@@ -417,16 +419,33 @@ def _handler(ui: WebUI):
 
 
 # ------------------------------------------------------------------------------------------------ browser
-def open_browser(url: str, kind: str = "auto") -> subprocess.Popen | None:
-    """Full-screen app window of its own (own profile, so it is a new process the app can watch: closing the window
-    ends the app). kind: auto | chrome | firefox | none."""
+def _forget_window_size(profile: Path) -> None:
+    """Chrome restores an app window's last size from its profile and then ignores the requested one (2026-10-28:
+    a 151 x 1060 window after a resize). Drop the remembered placement before each start."""
+    prefs = profile / "Default" / "Preferences"
+    try:
+        doc = json.loads(prefs.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    br = doc.get("browser", {})
+    if br.pop("app_window_placement", None) is not None or br.pop("window_placement", None) is not None:
+        prefs.write_text(json.dumps(doc), encoding="utf-8")
+
+
+def open_browser(url: str, kind: str = "auto", screen: tuple | None = None) -> subprocess.Popen | None:
+    """Full-screen window of its own (kiosk: no resizing; own profile, so it is a new process the app can watch:
+    closing it with Alt+F4 ends the app). screen: (x, y, w, h) of the monitor. kind: auto | chrome | firefox | none."""
     if kind == "none":
         return None
     profile = Path.home() / ".cache" / "pinch_sim" / "browser"
     chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
     if kind in ("auto", "chrome") and chrome:
-        profile.mkdir(parents=True, exist_ok=True)
-        return subprocess.Popen([chrome, f"--app={url}", "--start-fullscreen", f"--user-data-dir={profile}-chrome",
+        prof = Path(f"{profile}-chrome")
+        prof.mkdir(parents=True, exist_ok=True)
+        _forget_window_size(prof)
+        x, y, w, h = screen or (0, 0, 1920, 1080)
+        return subprocess.Popen([chrome, f"--app={url}", "--kiosk", f"--window-position={x},{y}",
+                                 f"--window-size={w},{h}", f"--user-data-dir={prof}",
                                  "--no-first-run", "--no-default-browser-check", "--disable-translate",
                                  "--password-store=basic", "--disable-session-crashed-bubble"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

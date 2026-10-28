@@ -550,7 +550,7 @@ def main(argv=None):
         session.listeners.append(lambda ev: alerts.on_event(ev, session))
         ui_dispatch = Dispatcher()                 # chips / "검증 후 이동": the voice protocol's commands and checks
         web = WebUI().start()
-        browser = open_browser(web.url, a.browser)
+        browser = open_browser(web.url, a.browser, mons[0] if mons else None)
         win_xy = (0, 0)
         print(f"web monitor: http://127.0.0.1:{web.port}/ (frame {layout.img_w}x{layout.img_h}, "
               + (f"{a.browser} browser full screen)" if browser is not None else f"open {web.url})"), flush=True)
@@ -801,6 +801,8 @@ def main(argv=None):
                         mouse_editor.cancel(session)
             for act in actions:              # browser buttons: keys of the same path, or a voice-protocol command
                 from .webui import apply_action
+                if act["name"] == "viewport":
+                    print(f"monitor page {act.get('w')}x{act.get('h')} px", flush=True)
                 more, why = apply_action(session, d, act, ui_dispatch)
                 keys += more
                 if why:

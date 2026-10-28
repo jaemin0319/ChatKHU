@@ -1,5 +1,6 @@
 /* Figma "아이로봇 / 재민님 전달용" (2026-10-28), white theme. Sizes are the design's px on its 1920 x 1200 frame,
-   times --u (= viewport height / 1200), so the layout keeps the design's proportions on 16:9 and 16:10 screens. */
+   times --u: the smaller of viewport height / 1200 and width / 1920, so the whole layout keeps the design's
+   proportions on any window (16:9 full screen: height-limited, 0.9). */
 @font-face {
   font-family: "Pretendard";
   src: url("/static/fonts/PretendardVariable.woff2") format("woff2-variations"),
@@ -9,7 +10,7 @@
 }
 
 :root {
-  --u: calc(100vh / 1200);
+  --u: min(calc(100vh / 1200), calc(100vw / 1920));
   --red: #cd0000;
   --ink: #1e1e1e;
   --text: #222;
