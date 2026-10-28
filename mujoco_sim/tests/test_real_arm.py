@@ -95,7 +95,7 @@ def test_profile_uses_the_arm_file(real):
     assert h["validation"]["joint_margin_deg"] >= 2.5 and h["validation"]["dt_s"] == 0.005
 
 
-def test_targets_are_on_minus_y_and_inside_the_real_ranges(real):
+def test_targets_are_on_minus_y_and_inside_the_real_ranges(real, tmp_path):
     arm, cfg, m, idx, sha = real
     from pinch_sim.collision import CollisionChecker
     from pinch_sim.kinematics import Kinematics
@@ -106,8 +106,18 @@ def test_targets_are_on_minus_y_and_inside_the_real_ranges(real):
     for trial in range(4):
         res = sample_target(3, trial, cfg, kin, col, home)
         assert res.target is not None and res.target.floor_point_m[1] < 0, res.message
-    beyond = make_target(0.275, np.radians(-30.0), cfg["target"], allow_out_of_range=True)   # J1 would be ~ -49
-    ok, why = precheck(beyond, kin, col, home, cfg)
+    # the arm's ranges narrow the simulator's (load_scene): an arm with J1 +-45 refuses a target that needs J1 ~ -49
+    # (a copy of robot.yaml with J1 narrowed; the real file is whatever the user set, 2026-10-28 all +-180)
+    narrow = tmp_path / "robot.yaml"
+    text = DEFAULT_ROBOT_YAML.read_text()
+    j1 = next(line for line in text.splitlines() if "name: Revolute_1" in line)
+    narrow.write_text(text.replace(j1, j1[:j1.index("limit_deg")] + "limit_deg: [-45, 45]}"))
+    cfg45 = apply_profile(load_config(), RealArm.load(narrow))
+    m45, idx45, _ = load_scene(cfg45)
+    assert np.isclose(np.degrees(idx45.hi[0]), 45.0) and np.isclose(np.degrees(idx45.lo[0]), -45.0)
+    kin45, col45 = Kinematics(m45, idx45, cfg45["ik"]), CollisionChecker(m45, idx45)
+    beyond = make_target(0.275, np.radians(-30.0), cfg45["target"], allow_out_of_range=True)   # J1 would be ~ -49
+    ok, why = precheck(beyond, kin45, col45, ready_q(m45)[idx45.qpos], cfg45)
     assert not ok and why.startswith(("joint_limit", "ik_not_converged")), why
 
 
