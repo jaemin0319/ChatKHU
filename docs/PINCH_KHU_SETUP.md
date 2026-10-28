@@ -87,7 +87,7 @@ cd ..
 
 python3 -m venv .venv-voice
 .venv-voice/bin/pip install -r voice/requirements.lock
-(source voice/env.sh; python -m pytest -q voice/tests)    # 17 passed
+(source voice/env.sh; python -m pytest -q voice/tests)    # 16 passed
 
 cd manipulator_control_ws
 python3 -m venv .venv && source scripts/env.sh

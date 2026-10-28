@@ -62,9 +62,8 @@ command -v "$PY" >/dev/null || { echo "$PY 없음: sudo apt install python3.12 p
 "$PY" -c 'import ensurepip' 2>/dev/null \
   || { echo "ensurepip 없음: sudo apt install python3.12-venv (또는 ./setup.sh --system)" >&2; exit 1; }
 echo "  $("$PY" -V)"
-missing=()
-for lib in libportaudio.so.2; do ldconfig -p 2>/dev/null | grep -q "$lib" || missing+=("$lib"); done
-[ ${#missing[@]} -eq 0 ] || echo "  경고: ${missing[*]} 없음 (마이크·스피커): sudo apt install libportaudio2 (또는 ./setup.sh --system)"
+"$PY" -c 'import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library("portaudio") else 1)' \
+  || echo "  경고: PortAudio 없음 (마이크·스피커): sudo apt install libportaudio2 (또는 ./setup.sh --system)"
 
 mkvenv() {   # $1 = venv folder
   if [ ! -x "$1/bin/python" ]; then
@@ -82,7 +81,7 @@ mkvenv "$ROOT/mujoco_sim/.venv"
   pyrun $P -m pip install -q --disable-pip-version-check --no-deps mediapipe==0.10.21 # 그냥 깔면 numpy 2가 들어와 깨진다
   pyrun $P -m pip install -q --disable-pip-version-check -r requirements-hand.txt
   pyrun $P -m pip install -q --disable-pip-version-check -r requirements-astra.txt   # -e ../pac_vision + openni 2.3.0
-  pyrun $P -m pip check >/dev/null 2>&1 || true   # mediapipe의 jax/opencv-contrib 경고는 정상 (requirements-hand.txt)
+  echo "  (위에 'mediapipe requires jax / jaxlib / opencv-contrib-python' 줄이 나오면 정상이에요: requirements-hand.txt)"
 )
 
 step "음성 가상환경: .venv-voice"
