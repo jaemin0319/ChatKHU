@@ -274,6 +274,7 @@ def start_stall_watch(beat: list, path, limit_s: float = 3.0) -> None:
 
 
 def main(argv=None):
+    faulthandler.enable(all_threads=True)      # a native crash (GLFW, OpenNI, MediaPipe) prints where it happened
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--target-r", type=float)
@@ -842,6 +843,18 @@ def main(argv=None):
                 viewer.close()
             if browser is not None and browser.poll() is not None:   # the monitor window was closed
                 viewer.close()
+        # the run's summary before the 3-D window is torn down: GLFW's terminate has crashed the process at exit
+        # (2026-10-28, Wayland, twice), and the summary must not be lost with it
+        summary = {"frames": frame, "lag_resets": lag_resets, "final_state": session.state,
+                   "last_run": session.last_run, "events": len(session.events)}
+        if sync_log:
+            s_ms = np.abs(np.array(sync_log)) * 1000
+            summary["rgb_depth_skew_ms"] = {"n": int(s_ms.size), "p50": round(float(np.percentile(s_ms, 50)), 1),
+                                            "p95": round(float(np.percentile(s_ms, 95)), 1),
+                                            "max": round(float(s_ms.max()), 1)}
+        if marker_mon is not None and marker_mon.result is not None:
+            summary["markers_last"] = marker_mon.result.to_dict()
+        print(json.dumps(summary, ensure_ascii=False, default=str), flush=True)
     if gateway is not None:
         gateway.close()
     if web is not None:
@@ -855,17 +868,8 @@ def main(argv=None):
     if depth_src is not None:
         depth_src.close()
     session.close()
-    cv2.destroyAllWindows()
-    summary = {"frames": frame, "lag_resets": lag_resets, "final_state": session.state, "last_run": session.last_run,
-               "events": len(session.events)}
-    if sync_log:
-        s_ms = np.abs(np.array(sync_log)) * 1000
-        summary["rgb_depth_skew_ms"] = {"n": int(s_ms.size), "p50": round(float(np.percentile(s_ms, 50)), 1),
-                                        "p95": round(float(np.percentile(s_ms, 95)), 1),
-                                        "max": round(float(s_ms.max()), 1)}
-    if marker_mon is not None and marker_mon.result is not None:
-        summary["markers_last"] = marker_mon.result.to_dict()
-    print(json.dumps(summary, ensure_ascii=False, default=str))
+    if web is None:
+        cv2.destroyAllWindows()
     return summary
 
 
