@@ -1,4 +1,4 @@
-"""Real-arm profile (pinch_sim.app --real-arm): plan for the real arm of ~/manipulator_control_ws.
+"""Real-arm profile (pinch_sim.app --real-arm): plan for the real arm of <repo>/manipulator_control_ws.
 
 That program (`python -m manipulator_control pinch`) owns the arm and reads its config/robot.yaml. This module reads
 the same file (never writes it), so both use one set of joint limits and one HOME:
@@ -16,6 +16,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,7 +26,9 @@ import numpy as np
 from .frames import look_at_quat
 from .model import JOINTS, ROOT, RobotIndex, file_sha, with_overrides
 
-DEFAULT_ROBOT_YAML = Path.home() / "manipulator_control_ws" / "config" / "robot.yaml"
+# the arm program's workspace: <repo>/manipulator_control_ws next to mujoco_sim (or $MANIPULATOR_CONTROL_WS)
+ARM_WS = Path(os.environ.get("MANIPULATOR_CONTROL_WS") or ROOT.parent / "manipulator_control_ws")
+DEFAULT_ROBOT_YAML = ARM_WS / "config" / "robot.yaml"
 PROFILE = ROOT / "configs" / "real_arm.json"
 
 

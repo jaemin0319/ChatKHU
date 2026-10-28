@@ -324,10 +324,10 @@ def main(argv=None):
                          "next to --calib if it exists, else 0,0,0 = on the calibration origin facing +X")
     ap.add_argument("--real-arm", action="store_true",
                     help="plan for the real arm and run approved paths on it: python -m manipulator_control pinch "
-                         "(~/manipulator_control_ws) must be running and at HOME; its robot.yaml sets HOME and the "
+                         "(<repo>/manipulator_control_ws) must be running and at HOME; its robot.yaml sets HOME and the "
                          "joint ranges, the simulator shows the measured pose (real_arm.py, arm_link.py)")
     ap.add_argument("--robot-yaml", metavar="PATH",
-                    help="--real-arm: the arm program's config/robot.yaml (default ~/manipulator_control_ws/config/robot.yaml)")
+                    help="--real-arm: the arm program's config/robot.yaml (default <repo>/manipulator_control_ws/config/robot.yaml, or $MANIPULATOR_CONTROL_WS)")
     ap.add_argument("--rehearse", action="store_true",
                     help="with --real-arm: the real arm's profile (HOME, ranges, its side of the desk) without the arm: "
                          "the simulator executes as usual (rehearsal on the real camera image, nothing moves)")

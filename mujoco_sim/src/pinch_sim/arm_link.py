@@ -1,5 +1,5 @@
 """The simulator's side of the real-arm link (pinch_sim.app --real-arm). The arm's program
-(`python -m manipulator_control pinch`, ~/manipulator_control_ws) is the server and owns the arm.
+(`python -m manipulator_control pinch`, <repo>/manipulator_control_ws) is the server and owns the arm.
 
 Protocol (version 1, JSON over multiprocessing.connection with the HMAC key file next to the socket): the server
 sends hello; we answer with ours (real_arm.hello: robot.yaml sha, model sha, limits, HOME, how strictly we validate);

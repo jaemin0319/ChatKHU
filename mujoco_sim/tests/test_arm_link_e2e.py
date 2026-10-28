@@ -20,13 +20,13 @@ import yaml
 
 from pinch_sim.arm_link import ArmLink
 from pinch_sim.model import config_sha, load_config, load_scene, ready_q
-from pinch_sim.real_arm import RealArm, apply_profile, hello
+from pinch_sim.real_arm import ARM_WS, RealArm, apply_profile, hello
 from pinch_sim.session import Session
 
-WS = Path.home() / "manipulator_control_ws"
+WS = ARM_WS
 PY = WS / ".venv" / "bin" / "python"
 pytestmark = pytest.mark.skipif(not (PY.exists() and (WS / "config" / "robot.yaml").exists()),
-                                reason="no ~/manipulator_control_ws with its venv")
+                                reason="no manipulator_control_ws with its venv (setup.sh)")
 
 
 def e2e_config(tmp: Path) -> Path:

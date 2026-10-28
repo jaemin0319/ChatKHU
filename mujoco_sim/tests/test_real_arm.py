@@ -18,7 +18,7 @@ from pinch_sim.ui import notice_text
 from pinch_sim.voice_gateway import Dispatcher
 from pinch_sim.webui import menu_state
 
-pytestmark = pytest.mark.skipif(not DEFAULT_ROBOT_YAML.exists(), reason="no ~/manipulator_control_ws robot.yaml")
+pytestmark = pytest.mark.skipif(not DEFAULT_ROBOT_YAML.exists(), reason="no manipulator_control_ws robot.yaml")
 
 
 @pytest.fixture(scope="module")
