@@ -36,7 +36,7 @@ PROTOCOL = 1
 # commands whose request must name the state revision it was decided on (stale answers are refused)
 REV_CHECKED = ("start_edit", "continue_edit", "undo_last_edit", "reset_to_original", "use_current_path",
                "new_target", "return_home", "move_point", "redo_last_edit", "return_reverse", "edit_return", "resume",
-               "vision_target")
+               "vision_target", "station_target")
 # no revision check: always safe / read-only / link bookkeeping
 UNCHECKED = ("stop", "status", "cancel_auto_run", "save_paths")
 COMMANDS = REV_CHECKED + UNCHECKED
@@ -46,7 +46,7 @@ SAVE_DIR = Path(__file__).resolve().parents[2] / "saved_paths"   # mujoco_sim/sa
 # Session event kinds forwarded to the voice process
 FORWARDED = ("state", "point_select", "back_to_edit", "paths_saved", "new_target", "return_path", "select", "validate_start", "validation", "execution_start",
              "execution_end", "cancel", "regenerated", "edit_begin", "edit_end", "edit_cancel", "undo", "redo",
-             "reset", "edit_mode", "auto_run_armed", "auto_run_cancelled", "calib", "hand_refused")
+             "reset", "edit_mode", "auto_run_armed", "auto_run_cancelled", "calib", "hand_refused", "stations_ready")
 
 
 def _clean(text, limit: int) -> str:
@@ -137,6 +137,15 @@ class Dispatcher:
                     return False, "BUSY", s.state
                 ok = s.cmd_new_target(d)
                 return ok, "NO_TARGET", ""
+            if cmd == "station_target":
+                # demo stations: "B 국그릇 / C 밥그릇" from S - a straight path there, edit mode on
+                name = str(req.get("station", "")).upper()
+                if name not in ("B", "C"):
+                    return False, "BAD_STATION", name
+                ok, code = s.cmd_station(name, d)
+                if not ok:
+                    return False, code, s.message
+                return True, "", {"station": name, "label": s.stations[name].label, "edit_mode": s.edit_mode}
             if cmd == "vision_target":
                 ok, code = s.cmd_vision_target(d)
                 return ok, code, {"target": None if s.target is None else s.target.summary()} if ok else s.message

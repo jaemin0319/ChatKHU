@@ -83,11 +83,15 @@ class Event:
     arg: object = None   # JOG "+x".."-rz" (terminal keys: base frame, session step); STEP "up"/"down";
     #                      TARGET (pos (3,), quat (4,)): the target dragged with the SIM gizmo (base frame)
     #                      link: LINK_UP (peer hello) / LINK_DOWN (reason) / EXT_STOP (reason) / TRAJ (pinch_traj.Trajectory)
-    source: str = "terminal"   # terminal | ui (panel, viewer) | script (--fake, tests) | link (pinch simulator)
+    source: str = "terminal"   # terminal | ui (panel, viewer) | arm_dialog | script (--fake, tests) | link (pinch simulator)
 
 
 LINK_KINDS = frozenset({"LINK_UP", "LINK_DOWN", "EXT_STOP", "TRAJ"})
 OPERATOR_SOURCES = frozenset({"terminal", "script"})   # only these confirm (y) or start (Enter)
+# 2026-10-29 user decision: the pinch arming (ARM_CONFIRM y) may also come from this program's own small arming
+# dialog (panel.py, same process and machine as the terminal). It confirms ONLY the arming - never HOME, a torque-on
+# or a START; the simulator, the browser and the panel's other buttons still cannot confirm anything.
+ARM_DIALOG_SOURCE = "arm_dialog"
 
 
 @dataclass(frozen=True)
@@ -301,7 +305,8 @@ class Supervisor:
         if (e.source == "link") != (e.kind in LINK_KINDS):
             self.log.event("input_discarded", kind=e.kind, source=e.source, reason="link kinds only from the link")
             return False
-        if e.kind in ("START", "CONFIRM") and e.source not in OPERATOR_SOURCES:
+        if e.kind in ("START", "CONFIRM") and e.source not in OPERATOR_SOURCES and not (
+                e.kind == "CONFIRM" and e.source == ARM_DIALOG_SOURCE and self.state == S.ARM_CONFIRM):
             self.log.event("input_discarded", kind=e.kind, source=e.source, reason="not the operator's terminal")
             return False
         if e.t < self.entry_t and e.kind in ("START", "CONFIRM"):
@@ -1935,7 +1940,7 @@ class Supervisor:
             lines.append("STORED CALIBRATION: grey = real pose from the encoders. Check it, then y in the terminal")
         if self.purpose == "pinch" and self.state in PINCH_IDLE_STATES | {S.TRAJ_MOVING, S.HOLDING}:
             lines.append({S.LINK_WAIT: "PINCH: waiting for the simulator (--real-arm)",
-                          S.ARM_CONFIRM: "PINCH: simulator connected - press y in the TERMINAL to arm",
+                          S.ARM_CONFIRM: "PINCH: simulator connected - press y in the TERMINAL (or the arming dialog) to arm",
                           S.HOLDING: "PINCH: disarmed - y in the TERMINAL re-arms"}.get(
                 self.state, "PINCH ARMED: simulator approvals move the REAL arm (s = stop + disarm)"))
             if self.state == S.TRAJ_MOVING:

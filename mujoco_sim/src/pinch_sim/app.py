@@ -318,10 +318,16 @@ def main(argv=None):
                     help="where the user stands around the robot; voice directions (right, away, ...) are fixed "
                          "to the calibration axes as seen from there (default right: at -Y, facing +Y, "
                          "so right = +X, away = +Y)")
+    ap.add_argument("--swap-left-right", action="store_true",
+                    help="swap the voice directions right and left only (up/down/away/toward stay as --user-side)")
     ap.add_argument("--robot-pose", metavar="X,Y,YAW_DEG",
                     help="where the robot base centre stands in the calibration frame (m on the desk) and which "
                          "way it faces (deg, counter-clockwise from +X seen from above); default: robot_pose.yaml "
                          "next to --calib if it exists, else 0,0,0 = on the calibration origin facing +X")
+    ap.add_argument("--stations", nargs="?", const="", metavar="YAML",
+                    help="demo stations from ArUco markers (stations.py): HOME -> S (basket, 6) by itself, then B (7) / "
+                         "C (8) chosen by voice, straight paths edited, ends at S. Default file: stations.yaml next to "
+                         "--calib")
     ap.add_argument("--real-arm", action="store_true",
                     help="plan for the real arm and run approved paths on it: python -m manipulator_control pinch "
                          "(<repo>/manipulator_control_ws) must be running and at HOME; its robot.yaml sets HOME and the "
@@ -446,7 +452,9 @@ def main(argv=None):
                       log_path=ROOT / f"logs/session_{stamp}.jsonl")
     session.real_arm = arm
     print(f"model {sha[:12]}  MuJoCo {mujoco.__version__}  log logs/session_{stamp}.jsonl")
-    if a.target_r is not None:
+    if a.stations is not None:
+        pass                                             # the first path is HOME -> S once the markers are read
+    elif a.target_r is not None:
         session.cmd_fixed_target(a.target_r, a.target_deg or 0.0, d)
     else:
         session.cmd_new_target(d, count_as_new=False)   # first seeded target at start: not a New press
@@ -543,6 +551,41 @@ def main(argv=None):
         marker_mon = MarkerMonitor(cam_model, Path(a.calib).resolve().parent / "markers.yaml")
         session.calib_state = "unverified" if calib_trust == "unverified" else marker_mon.state
         print(f"calibration: {calib_text(session.calib_state, marker_mon)}", flush=True)
+    # demo stations: read the markers from the first camera frames (or base_m without a camera), then HOME -> S
+    station_cfg = station_reader = None
+    base_pending = False                 # HOME -> S waits for the armed arm, then 쿠옹이 asks before it runs
+    if a.stations is not None:
+        from . import stations as stations_mod
+        from .canvas import cal_to_world
+        spath = Path(a.stations) if a.stations else (Path(a.calib).resolve().parent / "stations.yaml" if a.calib
+                                                     else None)
+        if spath is None or not spath.exists():
+            ap.error(f"--stations: no station file ({spath or 'give a path or --calib'})")
+        station_cfg = stations_mod.load_config(spath)
+        if a.video and getattr(cam_model, "conv", None) is not None:
+            station_reader = stations_mod.StationReader(station_cfg, cam_model, cal_to_world)
+            print(f"stations: reading markers {[s.marker for s in station_cfg.stations.values()]} from the camera "
+                  f"({spath})", flush=True)
+        elif stations_mod.from_base(station_cfg, cal_to_world):
+            print(f"stations: no camera - base_m from {spath}", flush=True)
+        else:
+            ap.error("--stations needs the camera (--video with --calib) or base_m for every station")
+
+    def stations_ready() -> None:
+        nonlocal base_pending
+        from .canvas import world_to_cal
+        rx, ry = world_to_cal([0.0, 0.0, 0.0])[:2]     # robot base in the calibration frame
+        print("stations located:\n" + "\n".join(stations_mod.describe(station_cfg, (rx, ry))), flush=True)
+        session.set_stations(station_cfg.stations, dip_m=station_cfg.dip_m)
+        with session.acting("sim"):
+            ok, code = session.cmd_station("S", d)
+        base_pending = ok
+        if not ok:
+            print(f"stations: HOME -> S path failed ({code}): {session.message}", flush=True)
+
+    if station_cfg is not None and station_reader is None:      # no camera: base_m positions are known already
+        stations_ready()
+
     mons = monitors()
     web = browser = alerts = ui_dispatch = None
     if a.ui == "web":
@@ -581,11 +624,16 @@ def main(argv=None):
     # (not the camera image, so moving the camera or re-calibrating does not turn "right" around)
     from .canvas import user_axes
     session.screen_axes = user_axes(a.user_side)
+    if a.swap_left_right:
+        ax = session.screen_axes
+        ax["right"], ax["left"] = ax["left"], ax["right"]
+        print("voice directions: right and left swapped (--swap-left-right)", flush=True)
     hand_ctrl = hand_editor = depth_src = None
     if a.hand is not None:
         from . import hand_input
         from .hand_input import HandCamera, HandConfig, HandController
         hand_input._USER_SIDE[0] = a.user_side
+        hand_input._SWAP_LR[0] = bool(a.swap_left_right)
         hcfg = HandConfig(camera=a.hand, mirror=hand_cam is None)       # a separate webcam is a mirror view
         if hand_cam is None:
             hand_cam = HandCamera(hcfg)
@@ -667,7 +715,14 @@ def main(argv=None):
     lag_resets = 0
     app_start = time.perf_counter()
 
-    with mujoco.viewer.launch_passive(m, d, show_left_ui=False, show_right_ui=False) as viewer:
+    # web monitor: the 3-D view is a small panel in the page (sim_view.py), not a GLFW window beside it
+    if web is not None:
+        from .sim_view import SimView
+        view_cm = SimView(m)
+    else:
+        view_cm = mujoco.viewer.launch_passive(m, d, show_left_ui=False, show_right_ui=False)
+    with view_cm as viewer:
+        sim_view = viewer if web is not None else None
         texts = LatestTextPusher(viewer)
         # start the 3-D view from where the user stands, so "right" (a user direction) is right on screen;
         # the user can still rotate the 3-D view with the mouse
@@ -712,8 +767,20 @@ def main(argv=None):
                        f"{session.state}\ncommands: side_cam window" + (f"\n{peak_text(ov)}" if ov.peak is not None else ""),
                        f"frame {frame}  t={t_sim:.2f}s\n " + ("\n " if ov.peak is not None else "")))
             viewer.sync()
+            if sim_view is not None and sim_view.due(now):    # the page's 3-D panel turns around the path's middle
+                sim_view.follow(ov.path)
+                web.push_sim(sim_view.render(d, ov))
             # path etc. as a projected 2-D graph; on a real camera image only the path, A, B and the axes
             raw = source.frame()
+            if station_reader is not None and station_reader.update(raw, time.monotonic()):
+                stations_ready()
+            if base_pending and session.state == "GENERATED" and session.move_kind == "to_base" \
+                    and (arm is None or not arm.gate()) and (gateway is None or gateway.connected):
+                # armed (terminal y) and 쿠옹이 listening: it asks "설거지 바구니로 이동할까요?" and only the yes
+                # (validate_and_move) validates and runs HOME -> S. Without voice: the page's 검증 후 이동 button.
+                base_pending = False
+                with session.acting("sim"):
+                    session._emit("ready to move HOME -> S: waiting for the user's yes", "stations_ready")
             if marker_mon is not None and marker_mon.update(raw, time.monotonic()) and calib_trust == "file_ok":
                 session.calib_state = marker_mon.state
                 session._emit(f"camera calibration {marker_mon.state}: {marker_mon.text()}", "calib",
@@ -723,7 +790,11 @@ def main(argv=None):
                 from .canvas import draw_ab, draw_axes
                 if a.video:
                     draw_axes(img, cam_model)
-                draw_ab(img, cam_model, ab_start, session.target.floor_point_m if session.target is not None else None)
+                draw_ab(img, cam_model, ab_start, session.target.floor_point_m
+                        if session.target is not None and not session.stations else None)
+                if session.stations:
+                    stations_mod.draw_stations(img, cam_model, session.stations, session.visited, ui.text,
+                                               current=session.station_goal)
             hint = "" if gateway is None else (gateway.client_line if gateway.connected else "쿠옹이 연결 대기")
             if arm is not None:
                 hint = arm.badge() + (f"  |  {hint}" if hint else "")
@@ -809,6 +880,10 @@ def main(argv=None):
                 from .webui import apply_action
                 if act["name"] == "viewport":
                     print(f"monitor page {act.get('w')}x{act.get('h')} px", flush=True)
+                if act["name"] == "orbit":   # drag on the page's 3-D panel
+                    if sim_view is not None:
+                        sim_view.orbit(act.get("dx", 0.0), act.get("dy", 0.0))
+                    continue
                 more, why = apply_action(session, d, act, ui_dispatch)
                 keys += more
                 if why:

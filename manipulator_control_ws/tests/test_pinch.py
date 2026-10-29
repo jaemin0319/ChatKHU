@@ -173,6 +173,25 @@ def test_only_the_operator_terminal_arms():
     assert s.sup.view().armed
 
 
+def test_arm_dialog_confirms_only_the_arming():
+    """2026-10-29 user decision: this program's own arming dialog (panel.py) may arm, and nothing else."""
+    s = System(purpose="pinch", cfg=fake_cfg(home={"speed_deg_s": 22.5, "countdown_s": 0.5}))
+    assert s.until_state(S.HOME_PREVIEW, timeout_s=40)
+    s.cycle(1)
+    s.inputs.put("CONFIRM", source="arm_dialog")                  # not the HOME preview
+    s.cycle(3)
+    assert s.state == S.HOME_PREVIEW
+    assert any(e["kind"] == "CONFIRM" and e.get("source") == "arm_dialog" for e in s.events("input_discarded"))
+    s.confirm_preview()
+    assert s.until_state(S.LINK_WAIT, timeout_s=40)
+    s.link.put("LINK_UP", {})
+    assert s.until_state(S.ARM_CONFIRM, timeout_s=2)
+    s.cycle(1)
+    s.inputs.put("CONFIRM", source="arm_dialog")                  # the arming dialog's y
+    assert s.until_state(S.ARMED, timeout_s=1)
+    assert s.sup.view().armed
+
+
 def test_flush_keeps_stop_events():
     t = TerminalInput(stream=io.StringIO())
     t.put("CONFIRM")

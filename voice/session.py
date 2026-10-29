@@ -81,6 +81,9 @@ class LiveAssistant:
         self._echo_input = echo_input
         self._gate = WakeGate(cfg.wake_spellings, cfg.wake_seconds, cfg.wake_fuzzy, call_words=cfg.call_words,
                               answer_seconds=cfg.answer_seconds)
+        if not cfg.wake_required:                  # 호출어 없이: 처음부터 열어 두고 닫지 않는다
+            self._gate.listen_seconds = float('inf')
+            self._gate.open_now()
         self._handle: Optional[str] = None
         self._connected_once = False
         self._established = False
@@ -199,8 +202,16 @@ class LiveAssistant:
     def _observe(self, text: str) -> None:
         self._maybe_fast_stop(text)
         was_open = self._gate.open
-        if self._gate.observe(text) is not None and not was_open:
-            console.info(f'[호출어] 인식. {self._gate.listen_seconds:.0f}초 동안 명령을 받습니다.')
+        detection = self._gate.observe(text)
+        if detection is not None and detection.wake_only and not self._gate.question_open:
+            # 시연 지점: S(바구니)에서 "쿠옹아"라고만 부르면 앱이 다음 곳을 묻는다 (어디로 갈까요? / 남은 곳으로 갈까요?)
+            ask = getattr(self._editor, 'wake_question', lambda: None)()
+            if ask:
+                self._editor.announcements.put(ask)
+        if detection is not None and not was_open:
+            secs = self._gate.listen_seconds
+            console.info('[호출어] 인식. ' + ('이제부터 호출어 없이 명령을 받습니다.' if secs == float('inf')
+                                             else f'{secs:.0f}초 동안 명령을 받습니다.'))
             self._hint('쿠옹이가 듣고 있어요')
 
     def _maybe_fast_stop(self, text: str) -> None:

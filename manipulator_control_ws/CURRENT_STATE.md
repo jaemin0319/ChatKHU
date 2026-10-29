@@ -4,6 +4,8 @@
 
 ## 완료
 
+- **2026-10-29 무장 확인 창 (사용자 결정):** `pinch`의 무장 차례(ARM_CONFIRM)에 조작 패널이 "실물 무장" 작은 창을 항상 위로 띄워요. y 또는 버튼 = 무장(출처 `arm_dialog`, 이 상태에서만 받음), 그 뒤 창이 닫혀요. 터미널 y도 그대로예요. 시험 `test_arm_dialog_confirms_only_the_arming` 포함 pytest 153개 통과. 실기에서는 아직 안 써 봤어요.
+
 - **구현:** `scan`, `watch`, `prepare`, `prepare --hold-only`, `--fake`, `pose`, `preview-home` (README의 명령 표 참고).
 - **환경:** `.venv`(Python 3.12, `requirements.lock`), `scripts/env.sh`. 전역 설정 변경은 없어요(sudo·apt·udev·`~/.bashrc`·ROS 모두 그대로).
 - **모델:**

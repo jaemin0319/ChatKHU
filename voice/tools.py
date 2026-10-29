@@ -13,7 +13,7 @@ REGIONS = ['start', 'middle', 'end', 'whole']
 _DIRECTION = {
     'type': 'STRING', 'enum': DIRECTIONS,
     'description': '사용자 몸 기준. up 위, down 아래, left 왼쪽(A 쪽), right 오른쪽(B 쪽), '
-                   'toward_me 내 쪽(사용자 쪽), away 저쪽(사용자 반대쪽)',
+                   'toward_me 앞쪽("앞으로", "내 쪽"), away 뒤쪽("뒤로", "저쪽"). 말할 때는 앞쪽·뒤쪽이라고 한다',
 }
 _AMOUNT = {
     'type': 'STRING', 'enum': AMOUNTS,
@@ -68,6 +68,14 @@ DECLARATIONS = [
     {'name': 'set_target_from_camera',
      'description': '카메라가 책상 위에서 찾은 물체를 목표로 정하고 새 가는 길을 만든다. 물체가 여러 개면 사용자가 검지로 '
                     '가리킨 물체. 예: "이 물체로 목표 바꿔 줘", "저 컵을 목표로 해", "카메라로 목표 잡아 줘"'},
+    {'name': 'go_to_station',
+     'description': '시연: 로봇이 설거지 바구니(S)에 있을 때 다음에 갈 곳을 고른다. 바구니에서 그곳까지 직선 경로를 '
+                    '그리고 수정 모드를 켠다. B = 국그릇 = 7번 ("B", "비", "B로 가자", "B지점", "국그릇", "국그릇으로 가자", "국", "칠번"), '
+                    'C = 밥그릇 = 8번 ("C", "씨", "시", "C로 가자", "C지점", "밥그릇", "밥그릇으로 가자", "밥", "팔번"). '
+                    '앱이 "남은 ~로 갈까요?"라고 물었을 때 그렇다는 답("응", "가자")이면 그 남은 곳으로 부른다.',
+     'parameters': {'type': 'OBJECT', 'properties': {
+         'station': {'type': 'STRING', 'enum': ['B', 'C']},
+     }, 'required': ['station']}},
     {'name': 'save_paths',
      'description': '지금까지 움직인 가는 길과 돌아오는 길을 파일로 저장한다. 예: "경로 저장해", "저장해 줘". '
                     '처음 자리로 돌아온 뒤 "새 목표로 다시 해 볼까요?"에 아니라고 답했을 때도 부른다.'},

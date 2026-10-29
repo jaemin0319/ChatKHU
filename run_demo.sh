@@ -16,6 +16,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARM_WS="${MANIPULATOR_CONTROL_WS:-$ROOT/manipulator_control_ws}"
 CALIB="../pac_vision/config/cam2base.yaml"
+# 음성 "오른쪽"·"왼쪽"만 맞바꾼다 (pinch_sim --swap-left-right). 2026-10-28 사용자 결정: 노트북 화면을 보고 말하면
+# 기본 방향에서 좌우만 반대였다. 위·아래·멀리·가까이는 그대로.
+VOICE_DIR="--swap-left-right"
 MODE="${1:-}"
 [ $# -gt 0 ] && shift
 VOICE=1
@@ -93,14 +96,14 @@ case "$MODE" in
     only=""; [ "$MODE" = check ] && only=" --check-only"
     term "실물 제어 (pinch${only})" "$ARM_WS" "$(arm_cmd pinch$only "${SPEED[@]}")"
     wait_link_wait
-    sim "시뮬 (실물 연결)" "--real-arm --calib $CALIB --video auto --hand --depth --voice-gateway"
+    sim "시뮬 (실물 연결)" "--real-arm --calib $CALIB --video auto --hand --depth --voice-gateway $VOICE_DIR --stations"
     echo
     echo "시뮬이 연결되면 실물 제어 창에 무장 확인이 나와요: 팔 주변을 확인하고 y."
     [ "$MODE" = real ] && echo "무장 뒤에는 승인(검증 후 이동)마다 실물이 움직여요. 12 V 스위치에 손을 두세요." \
                        || echo "검사 전용: 승인해도 실물은 움직이지 않아요 (시뮬은 '중단됨'으로 끝나요)."
     ;;
   rehearse)
-    sim "시뮬 (실물 프로필 연습, 실물 없음)" "--real-arm --rehearse --calib $CALIB --video auto --hand --depth --voice-gateway"
+    sim "시뮬 (실물 프로필 연습, 실물 없음)" "--real-arm --rehearse --calib $CALIB --video auto --hand --depth --voice-gateway $VOICE_DIR --stations"
     ;;
   sim)
     sim "시뮬 (카메라 없음)" "--target-r 0.275 --target-deg 10 --voice-gateway"

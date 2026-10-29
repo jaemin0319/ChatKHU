@@ -4,6 +4,10 @@ confirmation dialog) and the gizmo's axes (base / tool). The EE itself is moved 
 decision stays in the bus loop. Other confirmations (y) and quit (q) stay in the terminal. Closing the panel sends
 STOP (the arm stops and holds).
 
+Pinch arming dialog (2026-10-29, user decision): while the session waits for the arming (ARM_CONFIRM) a small window
+stays on top ("실물을 무장할까요?"); y or its button arms (source "arm_dialog", accepted for that state only) and the
+window closes. It also closes when the state moves on (e.g. y in the terminal); the terminal y keeps working.
+
 Frames: "base" = robot base X/Y/Z (the big triad on the floor of the SIM); "tool" = the target's own axes. The
 status line shows the target as base-frame XYZ and RPY = fixed X, Y, Z angles (R = Rz(yaw) Ry(pitch) Rx(roll)).
 """
@@ -16,7 +20,7 @@ import threading
 import mujoco
 import numpy as np
 
-from .supervisor import TORQUE_OFF_NOW_STATES
+from .supervisor import ARM_DIALOG_SOURCE, TORQUE_OFF_NOW_STATES
 
 
 def rpy_to_mat(roll: float, pitch: float, yaw: float) -> np.ndarray:
@@ -78,7 +82,7 @@ class ControlPanel:
             self._thread.join(timeout)
 
     # ---------------------------------------------------------------- Tk (all calls in this thread)
-    _TK_ATTRS = ("root", "frame_var", "status", "detail", "detail_label", "groups")
+    _TK_ATTRS = ("root", "frame_var", "status", "detail", "detail_label", "groups", "arm_win")
 
     def _run(self) -> None:
         try:
@@ -145,7 +149,49 @@ class ControlPanel:
         tk.Label(root, text="y(확인)·q(종료)는 터미널에서. 이 창을 닫으면 정지(유지).", fg="#555").pack(anchor="w", padx=6,
                                                                                           pady=(0, 6))
         root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.arm_win = None
+        self._arm_done = False                # answered / closed for this ARM_CONFIRM: do not reopen until it leaves
+        self._family, self._big = family, big
         root.after(100, self._poll)
+
+    # ---------------------------------------------------------------- pinch arming dialog
+    def _arm_dialog(self, state: str) -> None:
+        """Open the small arming window while ARM_CONFIRM, close it in any other state."""
+        if state != "ARM_CONFIRM" or self.purpose != "pinch":
+            self._close_arm()
+            self._arm_done = False
+            return
+        if self.arm_win is not None or self._arm_done:
+            return
+        import tkinter as tk
+        w = tk.Toplevel(self.root)
+        self.arm_win = w
+        w.title("실물 무장")
+        w.attributes("-topmost", True)
+        w.resizable(False, False)
+        tk.Label(w, text="시뮬 연결됨. 실물을 무장할까요?", font=self._big).pack(padx=16, pady=(14, 4))
+        tk.Label(w, text="무장하면 승인할 때마다 실물이 움직입니다.\n팔 주변을 확인하고 12 V 스위치에 손을 두세요.",
+                 justify="center", fg="#555").pack(padx=16)
+        tk.Button(w, text="y  무장", bg="#c62828", fg="white", activebackground="#e53935", font=self._big,
+                  width=12, command=self._arm_yes).pack(pady=(10, 14))
+        for key in ("<y>", "<Y>"):
+            w.bind(key, lambda _e: self._arm_yes())
+        w.protocol("WM_DELETE_WINDOW", self._close_arm)     # closing it is not a yes (terminal y still works)
+        w.update_idletasks()
+        sw, sh = w.winfo_screenwidth(), w.winfo_screenheight()
+        w.geometry(f"+{max(0, (sw - w.winfo_width()) // 2)}+{int(sh * 0.15)}")
+        w.lift()
+        w.focus_force()
+
+    def _arm_yes(self) -> None:
+        self.put("CONFIRM", source=ARM_DIALOG_SOURCE)
+        self._close_arm()
+
+    def _close_arm(self) -> None:
+        if self.arm_win is not None:
+            self._arm_done = True
+            self.arm_win.destroy()
+            self.arm_win = None
 
     def _torque_off(self) -> None:
         from tkinter import messagebox
@@ -172,6 +218,7 @@ class ControlPanel:
         else:
             self.detail.set(v.message)
             self.detail_label.configure(fg="black")
+        self._arm_dialog(v.state)
         on = enabled(v.state, self.purpose)
         for group, buttons in self.groups.items():
             for b in buttons:

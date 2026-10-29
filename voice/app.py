@@ -54,8 +54,8 @@ async def run(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     if args.prompt:
         cfg.prompt_path = args.prompt.resolve()
-    elif args.sim is not None:  # 시뮬레이터용 지시문 (수정 모드, 손가락 수정, 수정 완료 → "검증 후 이동할까요?" → 어)
-        cfg.prompt_path = (Path(__file__).parent / 'prompts' / 'system_v7.md').resolve()
+    elif args.sim is not None:  # 시뮬레이터용 지시문 (v8: v7 + 시연 지점 S·B·C)
+        cfg.prompt_path = (Path(__file__).parent / 'prompts' / 'system_v8.md').resolve()
     if args.mic:
         cfg.mic = args.mic
     old = old_voice_processes()
@@ -102,7 +102,8 @@ async def run(args: argparse.Namespace) -> int:
         if args.text:
             console.info(f'문장을 입력하세요. 예: "{cfg.wake_word}, 가운데를 위로 조금 올려줘". /fail 로 실패 모드 전환, q 로 끝.')
         else:
-            console.info(f'"{cfg.wake_word}"라고 부른 뒤 말하세요. 끝내려면 Ctrl+C.')
+            console.info((f'"{cfg.wake_word}"라고 부른 뒤 말하세요.' if cfg.wake_required else
+                          '호출어 없이 바로 말하세요.') + ' 끝내려면 Ctrl+C.')
 
         assistant = LiveAssistant(cfg, editor, logger, mic=mic, speaker=speaker, lines=lines,
                                   echo_input=args.text and not sys.stdin.isatty())

@@ -5,7 +5,8 @@ The camera image with the projected path (overlay, hand cursor) is still drawn h
 the height graph, alert dialogs and cards, the run / stop buttons - is plain HTML/CSS/JS in web/ (no build step).
 
 Server: ThreadingHTTPServer on 127.0.0.1, a free port. A random token per run guards everything that carries data or
-acts on the session: GET /stream (MJPEG of the latest frame), GET /events (server-sent events with the UI state),
+acts on the session: GET /stream (MJPEG of the latest frame), GET /sim (MJPEG of the small 3-D simulator view,
+sim_view.py), GET /events (server-sent events with the UI state),
 POST /api/input (key / mouse / action). Static files (/, /static/...) carry no data.
 The Session is only touched by the main loop: inputs are queued here (drain()), the state is built there (ui_state()).
 What the screen shows is decided here (menu_state, dialogs, toasts), so it is tested without a browser.
@@ -30,8 +31,9 @@ import numpy as np
 STATIC_DIR = Path(__file__).resolve().parent / "web"
 KEYS = set("NSVYHXUROEGQ")
 MOUSE_KINDS = ("press", "move", "release", "cancel")
-ACTIONS = ("step", "run", "stop", "confirm_run", "answer", "undo", "redo", "reset", "viewport")
-UI_COMMANDS = ("use_current_path", "resume", "edit_return", "return_reverse", "new_target", "save_paths")
+ACTIONS = ("step", "run", "stop", "confirm_run", "answer", "undo", "redo", "reset", "viewport", "orbit")
+UI_COMMANDS = ("use_current_path", "resume", "edit_return", "return_reverse", "new_target", "save_paths",
+               "station_target")
 REFUSAL = {"STALE_REVISION": "방금 경로가 바뀌었어요. 다시 확인해 주세요.", "BUSY": "검증이나 이동 중이에요.",
            "BUSY_EXECUTING": "이동 중이에요.", "NOT_ALLOWED": "지금 상태에서는 할 수 없어요.",
            "NO_PATH": "경로가 없어요.", "PATH_FAILED": "검증에 실패한 경로예요. 먼저 수정해 주세요.",
@@ -100,12 +102,59 @@ def menu_state(session) -> dict:
     return out(3, "이동 일시정지", "pause")                     # ABORTED
 
 
-def answer_chips(chat: list, rev: int) -> list:
+def _last_kuong(chat: list) -> str:
+    return next((t for _, role, t in reversed(chat) if role == "kuong"), "")
+
+
+def _station_chips(session, last: str) -> list | None:
+    """Demo stations (stations.py): answers to 어디로 갈까요? / 남은 ~으로 갈까요? / 다시 이동할까요? /
+    설거지 바구니로 이동할까요? - (label, command, fields). None = not a station question."""
+    st = getattr(session, "stations", None)
+    if not st:
+        return None
+    go = [(f"{n} {st[n].label}", "station_target", {"station": n}) for n in ("B", "C")]
+    if "어디로 갈까요" in last or "다시 이동할까요" in last:
+        return go
+    rest = [c for c in go if c[2]["station"] not in getattr(session, "visited", [])]
+    if "남은 " in last and "갈까요" in last:
+        return rest or go
+    if last.rstrip().endswith(("로 이동할까요?", "으로 이동할까요?")):
+        return [("이동", "use_current_path", {"auto_run": True})]
+    return None
+
+
+def answer_chips(chat: list, rev: int, session=None) -> list:
     """Chips under 쿠옹이's last bubble when it is one of the app's questions (one click = that answer)."""
-    last = next((t for _, role, t in reversed(chat) if role == "kuong"), "")
+    last = _last_kuong(chat)
+    station = _station_chips(session, last) if session is not None else None
+    if station is not None:
+        return [{"label": label, "command": cmd, "fields": fields, "rev": rev} for label, cmd, fields in station]
     for key, chips in ANSWERS:
         if key in last:
             return [{"label": label, "command": cmd, "fields": fields, "rev": rev} for label, cmd, fields in chips]
+    return []
+
+
+def suggestions(session, chat: list) -> list[str]:
+    """What the user could say now (shown when the chat panel is folded): from the state and 쿠옹이's last question."""
+    st, last = session.state, _last_kuong(chat)
+    if st in ("EXECUTING", "VALIDATING"):
+        return ["멈춰"]
+    if st == "ABORTED" or "계속 갈까요, 돌아갈까요" in last:
+        return ["계속 가", "돌아가"]
+    stations = getattr(session, "stations", None)
+    if stations and ("어디로 갈까요" in last or "다시 이동할까요" in last):
+        return [f"{stations['B'].label}으로 가자", f"{stations['C'].label}으로 가자"]
+    if stations and "남은 " in last and "갈까요" in last:
+        return ["응, 가자", "아니"]
+    if last.rstrip().endswith(("로 이동할까요?", "으로 이동할까요?")) and "검증 후" not in last:
+        return ["응, 이동해", "아니"]
+    if "검증 후 이동할까요" in last:
+        return ["응", "아니, 더 고칠래"]
+    if "돌아오는 길을 수정할까요" in last:
+        return ["돌아오는 길 수정할래", "반대로 돌아가"]
+    if session.edit_mode or st == "FAILED":
+        return ["여기 위로 조금", "앞쪽으로 2센티", "이전으로", "수정 완료"]
     return []
 
 
@@ -184,7 +233,7 @@ def apply_action(session, d, act: dict, dispatcher) -> tuple[list[str], str]:
     """A browser action -> keys for the app's existing key path, or a command of the voice protocol (same Dispatcher,
     same checks: expected_rev is the state the user saw). Returns (keys, why it was refused or "")."""
     name = act["name"]
-    if name == "viewport":                                     # the page's size: only logged by the app
+    if name in ("viewport", "orbit"):                          # page size (logged) / 3-D view: handled by the app
         return [], ""
     if name == "step":                                         # the 4-step menu: start that step
         i = int(act.get("index", -1)) if str(act.get("index", "")).lstrip("-").isdigit() else -1
@@ -220,7 +269,8 @@ def ui_state(session, *, alerts: Alerts, chat: list, hint: str, voice_connected:
                                           "theta_deg": round(float(np.degrees(t.theta_rad)), 1)},
         "heights": heights(session, tcp),
         "chat": [{"id": f"{tm:.3f}", "role": role, "text": text} for tm, role, text in chat],
-        "chips": answer_chips(chat, session.rev),
+        "chips": answer_chips(chat, session.rev, session),
+        "suggest": suggestions(session, chat),
         "hint": hint, "voice": voice_connected, "calib": calib, "arm": arm_badge,
         "toasts": alerts.current(), "dialog": alerts.dialog,
         "enabled": enabled, "frame": list(frame_wh),
@@ -235,6 +285,8 @@ class WebUI:
         self.inbox: queue.Queue = queue.Queue()
         self._frame = None
         self._frame_seq = 0
+        self._sim = None                 # the small 3-D simulator view (sim_view.py)
+        self._sim_seq = 0
         self._state = "{}"
         self._state_seq = 0
         self._cv = threading.Condition()
@@ -255,6 +307,11 @@ class WebUI:
     def push_frame(self, bgr: np.ndarray) -> None:
         with self._cv:
             self._frame, self._frame_seq = bgr, self._frame_seq + 1
+            self._cv.notify_all()
+
+    def push_sim(self, bgr: np.ndarray) -> None:
+        with self._cv:
+            self._sim, self._sim_seq = bgr, self._sim_seq + 1
             self._cv.notify_all()
 
     def push_state(self, state: dict) -> None:
@@ -285,6 +342,11 @@ class WebUI:
             self._cv.wait_for(lambda: self._frame_seq != seq or self.closing, timeout)
             return self._frame_seq, self._frame
 
+    def wait_sim(self, seq: int, timeout: float = 1.0):
+        with self._cv:
+            self._cv.wait_for(lambda: self._sim_seq != seq or self.closing, timeout)
+            return self._sim_seq, self._sim
+
     def wait_state(self, seq: int, timeout: float = 15.0):
         with self._cv:
             self._cv.wait_for(lambda: self._state_seq != seq or self.closing, timeout)
@@ -312,8 +374,12 @@ def parse_input(msg) -> dict | None:
         for k in ("index", "command", "rev", "w", "h"):
             if isinstance(msg.get(k), (int, str)) and not isinstance(msg.get(k), bool):
                 out[k] = msg[k]
+        for k in ("dx", "dy"):                  # orbit: drag on the 3-D view, page pixels
+            v = msg.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and abs(v) <= 5000:
+                out[k] = float(v)
         if isinstance(msg.get("fields"), dict):
-            out["fields"] = {k: v for k, v in msg["fields"].items() if k in ("auto_run", "direction")}
+            out["fields"] = {k: v for k, v in msg["fields"].items() if k in ("auto_run", "direction", "station")}
         return out
     return None
 
@@ -346,7 +412,9 @@ def _handler(ui: WebUI):
             if u.path.startswith("/static/"):
                 return self._static(u.path[len("/static/"):])
             if u.path == "/stream":
-                return self._stream() if self._authorized(q) else self._send(403)
+                return self._stream(ui.wait_frame) if self._authorized(q) else self._send(403)
+            if u.path == "/sim":
+                return self._stream(ui.wait_sim) if self._authorized(q) else self._send(403)
             if u.path == "/events":
                 return self._events() if self._authorized(q) else self._send(403)
             self._send(404)
@@ -380,7 +448,7 @@ def _handler(ui: WebUI):
                 ctype += "; charset=utf-8"
             self._send(200, path.read_bytes(), ctype)
 
-        def _stream(self) -> None:
+        def _stream(self, wait) -> None:
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
             self.send_header("Cache-Control", "no-store")
@@ -389,7 +457,7 @@ def _handler(ui: WebUI):
             ui.clients += 1
             try:
                 while not ui.closing:
-                    seq, frame = ui.wait_frame(seq)
+                    seq, frame = wait(seq)
                     if frame is None:
                         continue
                     ok, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])

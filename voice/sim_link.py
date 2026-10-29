@@ -6,7 +6,7 @@
 - 함수 → 시뮬레이터 명령
   start_edit  → start_edit : 시뮬레이터의 수정 모드를 실제로 켠다(손 입력은 수정 모드에서만 된다). 켜졌다는 결과가
                 와야만 안내 문장(say: EDIT_GUIDE)을 돌려준다. 검증 중이면 검증을 취소하고, 목표에 도착한 뒤면 돌아오는 길을 고친다
-  move_here   → move_point(target="here")  : 사용자가 시뮬레이터 화면에서 가리킨(클릭·검지) 점
+  move_here   → move_point(target="here")  : 사용자가 시뮬레이터 화면에서 검지로 가리킨 점 (마우스 클릭도 되지만 안내하지 않는다)
   move_region → move_point(target=start|middle|end) (whole은 아직 지원하지 않음)
   adjust_amount → undo_last_edit + move_point(한 단계 큰/작은 양) : "조금만 더" / "좀 덜"
   undo_edit   → undo_last_edit ("이전으로": 손·마우스·말 수정이 모두 같은 되돌리기 기록), reset_edit → reset_to_original
@@ -51,6 +51,9 @@ ASK_RETURN = '돌아오는 길을 수정할까요, 가던 길 그대로 반대�
 ASK_ARRIVED = '목표에 도착했어요. ' + ASK_RETURN
 ASK_HOME = '처음 자리로 돌아왔어요. 새 목표로 다시 해 볼까요?'
 ASK_RUN = '검증 후 이동할까요?'
+# 시연 지점 (pinch_sim --stations): S 설거지 바구니에서 B 국그릇 / C 밥그릇을 골라 다녀온다. 둘 다 다녀오면 다시 이동할지 묻는다
+ASK_WHERE = '어디로 갈까요?'   # S에 도착하면 바로 (처음). "쿠옹아"라고 부르면 다시 묻는다
+ASK_AGAIN = '두 곳 모두 다녀왔어요. 다시 이동할까요?'   # 둘 다 다녀온 뒤 (응 -> 새 한 바퀴, 어디로 갈까요?)
 # 앱의 질문 → 답이 될 수 있는 함수 (호출어 없이 받는 것은 이 함수들뿐이다. 멈춤은 언제나 된다)
 QUESTION_FUNCTIONS = {
     ASK_STOPPED: frozenset({'continue_motion', 'go_back'}),
@@ -216,7 +219,22 @@ class SimEditor:
     @staticmethod
     def question_functions(text: str) -> frozenset | None:
         """앱이 한 질문의 답이 될 함수 (모르는 질문이면 None: 호출어 없이는 받지 않는다)."""
-        return QUESTION_FUNCTIONS.get(text)
+        if text in QUESTION_FUNCTIONS:
+            return QUESTION_FUNCTIONS[text]
+        if text.endswith((ASK_WHERE, '다시 이동할까요?')) or ('남은 ' in text and text.endswith('갈까요?')):
+            return frozenset({'go_to_station'})      # "설거지 바구니에 도착했어요. 어디로 갈까요?" 등
+        if text.endswith(ASK_RETURN):            # "B 국그릇에 도착했어요. 돌아오는 길을 ..."
+            return QUESTION_FUNCTIONS[ASK_RETURN]
+        if text.endswith(('로 이동할까요?', '으로 이동할까요?')):   # "설거지 바구니로 이동할까요?" (HOME -> S)
+            return frozenset({'validate_and_move'})
+        return None
+
+    def wake_question(self) -> str | None:
+        """시연 지점: 로봇이 S(바구니)에 있고 다음 곳을 고를 차례면, 사용자가 "쿠옹아"라고 부를 때 다시 물을 질문."""
+        st = self.status.get('stations') or {}
+        if not st or not st.get('at_base') or self.status.get('state') not in ('DONE', 'HOLD'):
+            return None
+        return _next_question(st)
 
     def _refusal(self, res: dict) -> dict[str, Any]:
         """거절 이유. 상태 때문에 못 하는 경우는 지금 상태를 알려 주는 이유로 바꾼다."""
@@ -257,8 +275,11 @@ class SimEditor:
             return self._move(name, args)
         # 직전 말 수정의 단계는 수정 기록이 바뀔 때만 잊는다. 멈춤·이동·수정 완료 뒤 같은 길의 수정으로
         # 돌아오면(back_to_edit) "조금만 더"가 그 수정을 이어서 조절해야 하기 때문이다.
-        if name in ('undo_edit', 'reset_edit', 'new_target', 'edit_return_path', 'set_target_from_camera'):
+        if name in ('undo_edit', 'reset_edit', 'new_target', 'edit_return_path', 'set_target_from_camera',
+                    'go_to_station'):
             self.ladder.forget()
+        if name == 'go_to_station':
+            return self._go_to_station(args.get('station'))
         if name == 'set_target_from_camera':
             res = self._command_fresh('vision_target')
             if not res.get('accepted'):
@@ -283,6 +304,20 @@ class SimEditor:
         if not res.get('accepted'):
             return self._refusal(res)
         return {'status': 'applied'}
+
+    def _go_to_station(self, station) -> dict[str, Any]:
+        """시연: S에서 B / C까지 직선 경로를 그리고 수정 모드를 켠다 (시뮬레이터가 켠 뒤에만 안내한다)."""
+        if station not in ('B', 'C'):
+            return {'status': 'error', 'reason': 'bad_station'}
+        res = self._command_fresh('station_target', station=station)
+        if not res.get('accepted'):
+            code = str(res.get('reason_code', 'refused'))
+            if code in ('NOT_AT_BASE', 'NO_STATIONS'):
+                return {'status': 'failed', 'reason': code.lower()}
+            return self._refusal(res)
+        label = (res.get('detail') or {}).get('label', '')
+        return {'status': 'applied', 'station': station,
+                'say': f'{station} {label}까지 직선 경로를 그렸어요. {EDIT_GUIDE}'.replace('  ', ' ')}
 
     def _start_edit(self) -> dict[str, Any]:
         """수정 모드를 시뮬레이터에서 실제로 켠다. 켜졌다는 결과가 온 뒤에만 안내 문장을 준다."""
@@ -406,6 +441,46 @@ def _fail_place(status: dict) -> str:
     return f' 실패한 곳은 {way}의 약 {int(round(pct / 10.0)) * 10}% 지점이에요.'
 
 
+def _ro(word: str) -> str:
+    """'으로' / '로' (받침이 없거나 ㄹ 받침이면 '로')."""
+    if not word:
+        return '로'
+    c = ord(word[-1]) - 0xAC00
+    if not 0 <= c <= 11171:
+        return '로'
+    jong = c % 28
+    return '로' if jong in (0, 8) else '으로'
+
+
+def _next_question(st: dict) -> str:
+    """S에서 다음에 물을 것: 처음이면 어디로 갈까요? / 하나 남았으면 남은 곳 / 둘 다 다녀왔으면 다시 이동할지."""
+    if not st.get('visited'):
+        return ASK_WHERE
+    rest = st.get('remaining') or []
+    if not rest:
+        return ASK_AGAIN
+    name = rest[0]
+    label = (st.get('labels') or {}).get(name, '')
+    return f'남은 {name} {label}{_ro(label)} 갈까요?'.replace('  ', ' ')
+
+
+def _station_arrival(status: dict, last: dict) -> str:
+    """시연 지점에서 이동이 끝났을 때 알림: S 도착 / 그릇 도착(돌아오는 길 질문) / S로 복귀 / 둘 다 다녀옴(다시 이동할까요?)."""
+    st = status.get('stations') or {}
+    labels = st.get('labels') or {}
+    base = labels.get('S', '바구니')
+    if last.get('kind') == 'to_base':
+        return f'{base}에 도착했어요. {_next_question(st)}'
+    if last.get('phase') == 'outbound':
+        if last.get('kind') == 'return_reverse':
+            return ASK_RETURN
+        name = st.get('current') or ''
+        return f'{name} {labels.get(name, "")}에 도착했어요. '.replace('  ', ' ').lstrip() + ASK_RETURN
+    if st.get('remaining'):
+        return f'{base}{_ro(base)} 돌아왔어요. {_next_question(st)}'
+    return ASK_AGAIN
+
+
 def _announcement(ev: dict) -> str:
     """시뮬레이터 이벤트 중 사용자에게 말로 알릴 것만 한국어 한 문장으로."""
     kind, actor = ev.get('kind'), ev.get('actor')
@@ -426,12 +501,17 @@ def _announcement(ev: dict) -> str:
         if ev.get('state') != 'DONE' or data.get('next'):
             return ''   # 멈춤: stop_motion 결과로 말하고 5초 뒤 묻는다 / 돌아가서 수정으로: back_to_edit에서 말한다
         last = (status.get('last_exec') or {})
+        if status.get('stations'):
+            return _station_arrival(status, last)
         if last.get('phase') != 'outbound':
             return ASK_HOME
         # 거꾸로 오던 길에서 멈추고 돌아가 목표 자리로 돌아왔으면 도착 인사 없이 다시 묻는다
         return ASK_RETURN if last.get('kind') == 'return_reverse' else ASK_ARRIVED
     if kind == 'back_to_edit':
         return BACK_TO_EDIT
+    if kind == 'stations_ready':             # 무장됐다: 처음 움직이기 전에 한 번 묻는다
+        base = ((status.get('stations') or {}).get('labels') or {}).get('S', '바구니')
+        return f'{base}{_ro(base)} 이동할까요?'
     if kind == 'auto_run_cancelled':
         why = str(data.get('reason', ''))
         if why.startswith(('validation failed', 'execution finished', 'edit mode on', 'new validation')):
