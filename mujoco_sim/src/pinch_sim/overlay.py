@@ -39,6 +39,7 @@ class Overlay:
     height_from: int | None = None          # heights are coloured on path indices [height_from, height_until]
     height_until: int | None = None
     peak: np.ndarray | None = None          # highest point of the coloured part (edit phase only), world m
+    stations: list = field(default_factory=list)   # demo stations: [(floor xyz, target xyz, rgba)] (stations.py)
 
 
 def build_overlay(session, d: mujoco.MjData) -> Overlay:
@@ -53,6 +54,10 @@ def build_overlay(session, d: mujoco.MjData) -> Overlay:
         ov.height_from, ov.height_until = height_range(session.path.points_m, session.path.waypoint_index)
         if ov.state in HEIGHT_STATES:
             ov.peak = peak_point(session.path.points_m, ov.height_from, ov.height_until)
+    if getattr(session, "stations", None):
+        from .stations import RGBA
+        ov.stations = [(s.floor_m, s.tcp_goal_m, RGBA.get(n, (0.7, 0.7, 0.7, 1))) for n, s in session.stations.items()
+                       if s.floor_m is not None]
     k = session.pointed_index() if session.state in EDITABLE_STATES else None
     if k is not None:
         ov.pointed = session.path.points_m[k].copy()
@@ -147,6 +152,10 @@ def _segment(scn, a, b, width, rgba, gtype=mujoco.mjtGeom.mjGEOM_CAPSULE):
 
 
 def add_overlay(scn: mujoco.MjvScene, ov: Overlay, max_segments: int = 120) -> None:
+    for floor, goal, rgba in ov.stations:       # demo stations: a disc on the marker and its target point above it
+        _geom(scn, mujoco.mjtGeom.mjGEOM_CYLINDER, [0.025, 0.002, 0], floor + [0, 0, 0.002], rgba)
+        _geom(scn, mujoco.mjtGeom.mjGEOM_SPHERE, [0.008, 0, 0], goal, rgba)
+        _segment(scn, floor, goal, 0.0015, (*rgba[:3], 0.5))
     if ov.floor_point is not None:
         _geom(scn, mujoco.mjtGeom.mjGEOM_CYLINDER, [0.022, 0.002, 0], ov.floor_point + [0, 0, 0.002],
               (1.0, 0.1, 0.6, 1))

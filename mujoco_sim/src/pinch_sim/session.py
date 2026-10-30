@@ -48,7 +48,8 @@ from .control import ComputedTorque, TrajectoryExecutor, controlled_step
 from .frames import DOWN, WORLD, Pose, RobotState, theta_of
 from .kinematics import Kinematics
 from .model import RobotIndex, config_sha, ready_q
-from .paths import CartesianPath, PathGenerationError, initial_path, polyline_distance, return_path
+from .paths import (CartesianPath, PathGenerationError, initial_path, lower_end, polyline_distance, return_path,
+                    station_path, straight_path)
 from .targets import TargetSpec, make_target, precheck, sample_target, theta_range
 from .validation import Goal, PlanningContext, ValidationReport, validate
 
@@ -145,6 +146,13 @@ class Session:
         self.fail_at_pct: float | None = None
         # set by the app with a depth camera: () -> (object top in world m, "") or (None, reason) (vision_goal.py)
         self.vision_target = None
+        # demo stations (stations.py): S = dish basket, B / C = bowls. None = the usual single target.
+        # The robot goes HOME -> S by itself (move_kind "to_base"), then S -> B / C (straight path, edited) and back.
+        self.stations: dict | None = None
+        self.visited: list[str] = []          # stations reached by an outbound move (B, C)
+        self.station_goal: str | None = None  # station of the current / last outbound move
+        self.station_dip_m = 0.0              # S -> B / C and the way back end this far below the target and stay
+        self._at_base = False                 # updated every frame (watch) for status()
         self._actor, self._request_id = "sim", ""
 
     # ------------------------------------------------------------------ bookkeeping
@@ -291,6 +299,11 @@ class Session:
             self.hold_q = d.qpos[self.idx.qpos].copy() if self.real_arm is not None else ex.traj.q_knots[-1].copy()
             # stopped and went back: back to that move's editing (outbound, edited return) - not a new question
             nxt = ""
+            if self.stations and self.phase == "outbound" and self.station_goal in ("B", "C") \
+                    and self.station_goal not in self.visited:
+                self.visited.append(self.station_goal)       # arrived at that bowl
+            if self.stations:
+                self._at_base = self.at_base(d)              # the DONE event's status already says "at S" 
             if self._resume_dir == "back":
                 nxt = {"outbound": "edit_outbound", "return_edit": "edit_return"}.get(self.move_kind, "")
             self._set("DONE", f"done ({self.path.source} path, TCP-path dev {np.max(dev)*1000:.3f} mm): "
@@ -412,17 +425,19 @@ class Session:
         self.target_label = "fixed"
         return self._use_target(t, d, extra=f"fixed target; precheck {reason} (informational, validation decides)")
 
-    def _use_target(self, t: TargetSpec, d, extra: str = "", kind: str = "new_target", **data) -> bool:
+    def _use_target(self, t: TargetSpec, d, extra: str = "", kind: str = "new_target", builder=None, **data) -> bool:
         self._invalidate("new target")
         self.target = t
         self.goal = Goal(t.tcp_goal_m, t.tool_axis, "tcp_goal")
         self.phase, self.last_exec, self.outbound_exec = "outbound", None, None
         self.move_kind, self._resume_dir, self.outbound_edit, self.return_exec, self.return_edit = \
             "outbound", None, None, None, None
-        self._path_builder = lambda st: initial_path(st.tcp, st.q_rad, t, self.cfg, allow_unsafe=self.allow_unsafe)
+        self._path_builder = builder or (lambda st: initial_path(st.tcp, st.q_rad, t, self.cfg,
+                                                                 allow_unsafe=self.allow_unsafe))
+        self.station_goal = None
         st = self.robot_state(d)
         try:
-            self._set_path(initial_path(st.tcp, st.q_rad, t, self.cfg, allow_unsafe=self.allow_unsafe))
+            self._set_path(self._path_builder(st))
         except PathGenerationError as exc:
             self._set_path(None)
             self._set("HOLD", f"path generation failed: {exc}", kind, target=t.summary())
@@ -430,6 +445,65 @@ class Session:
         self._set("GENERATED", f"target r={t.r_m:.3f} m th={np.degrees(t.theta_rad):+.1f} deg "
                   f"floor={np.round(t.floor_point_m, 3).tolist()}; {extra}", kind, target=t.summary(), **data)
         return True
+
+    # ------------------------------------------------------------------ demo stations (stations.py)
+    def set_stations(self, stations: dict, dip_m: float = 0.0) -> None:
+        self.stations, self.visited, self.station_dip_m = stations, [], float(dip_m)
+        self._emit("stations: " + ", ".join(f"{s.title} at {np.round(s.base_m, 3).tolist() if s.base_m is not None else '?'}"
+                                            for s in stations.values()), "stations")
+
+    def at_base(self, d) -> bool:
+        """The robot is at S (its target point), so B / C can be chosen."""
+        if not self.stations:
+            return False
+        tol = max(0.02, float(self.cfg["validation"]["start_pos_tol_m"]))
+        p, g = self.robot_state(d).tcp.p_m, self.stations["S"].tcp_goal_m     # above S, or down there after a return
+        return bool(np.hypot(*(p[:2] - g[:2])) <= tol and g[2] - self.station_dip_m - tol <= p[2] <= g[2] + tol)
+
+    def cmd_station(self, name: str, d) -> tuple[bool, str]:
+        """Straight path from the actual TCP to a station's target point. S: from HOME (runs by itself, no edit);
+        B / C: only from S, edit mode on (the user edits it, then 수정 완료 -> 검증 후 이동할까요?)."""
+        if not self.stations or name not in self.stations:
+            self._emit(f"station {name!r} refused: no stations", "refused")
+            return False, "NO_STATIONS"
+        if self.state in ("EXECUTING", "VALIDATING"):
+            self._emit(f"station {name} refused in {self.state}", "refused")
+            return False, "BUSY"
+        if name != "S" and not self.at_base(d):
+            self._emit(f"station {name} refused: the robot is not at S", "refused")
+            return False, "NOT_AT_BASE"
+        if name != "S" and all(n in self.visited for n in ("B", "C")):
+            self.visited = []                          # both done and the user goes again: a new round
+        stn = self.stations[name]
+        cruise = stn.tcp_goal_m
+        dip = 0.0 if name == "S" else self.station_dip_m          # HOME -> S stays at the target height
+        goal = cruise - np.array([0.0, 0.0, dip])                 # B / C: down there at the end, and stays
+        t = TargetSpec(float(np.hypot(goal[0], goal[1])), theta_of(goal[0], goal[1], self.cfg["target"].get("front_y", 1.0)),
+                       stn.floor_m.copy(), goal.copy(), cruise.copy(), DOWN.copy())
+        if name == "S":
+            build = lambda st: straight_path("to_base", st.tcp, st.q_rad, cruise, self.cfg, meta={"station": name})
+        else:
+            build = lambda st: station_path("to_target", st.tcp, st.q_rad, cruise, dip, self.cfg,
+                                            meta={"station": name})
+        self._station_build = build                       # also after a stop and "back" (_back_to_edit)
+        ok = self._use_target(t, d, extra=f"station {stn.title}: straight path", builder=build, station=name)
+        if not ok:
+            return False, "NO_PATH"
+        self.station_goal = name
+        self.target_label = stn.title
+        if name == "S":
+            self.move_kind = "to_base"
+        else:
+            self.set_edit_mode(True, "station")
+        return True, ""
+
+    def stations_status(self, d=None) -> dict | None:
+        if not self.stations:
+            return None
+        rest = [n for n in ("B", "C") if n not in self.visited]
+        return {"labels": {n: s.label for n, s in self.stations.items()}, "visited": list(self.visited),
+                "remaining": rest, "current": self.station_goal,
+                "at_base": self.at_base(d) if d is not None else None}
 
     def cmd_return(self, d) -> bool:
         """H: one-way path from the actual current TCP back to the ready TCP (needs S, V, Y like any path)."""
@@ -466,8 +540,12 @@ class Session:
 
     def _reverse_of(self, path: CartesianPath, st) -> CartesianPath:
         n = len(path.points_m)
-        return self._from_tcp("return_reverse", st.tcp, st.q_rad, path.points_m[::-1], path.tool_axis[::-1],
-                              [n - 1 - i for i in path.waypoint_index], {"reverse_of": path.fingerprint})
+        rev = self._from_tcp("return_reverse", st.tcp, st.q_rad, path.points_m[::-1], path.tool_axis[::-1],
+                             [n - 1 - i for i in path.waypoint_index], {"reverse_of": path.fingerprint})
+        # demo stations: the way back also ends down at the basket (the first trip left S at the target height)
+        if path.meta.get("dip_m") and not path.meta.get("start_low"):
+            rev = lower_end(rev, float(path.meta["dip_m"]), self.cfg)
+        return rev
 
     def _start_return(self, d, edit: bool) -> tuple[bool, str]:
         """After arriving at the target (outbound DONE): the executed (edited) path backwards, to edit or to run."""
@@ -478,10 +556,10 @@ class Session:
         if np.linalg.norm(self.robot_state(d).tcp.p_m - out.points_m[-1]) > self.cfg["validation"]["start_pos_tol_m"]:
             self._emit("return refused: the robot is not at the end of the outbound path", "refused")
             return False, "NOT_AT_TARGET"
-        goal = Goal(out.points_m[0].copy(), out.tool_axis[0].copy(), "start")
         self._invalidate("return path")
         self._path_builder = lambda st: self._reverse_of(out, st)
         self._set_path(self._reverse_of(out, self.robot_state(d)))
+        goal = Goal(self.path.points_m[-1].copy(), self.path.tool_axis[-1].copy(), "start")   # = start, or below it
         self.goal, self.phase = goal, "return"
         self.move_kind, self._resume_dir = ("return_edit" if edit else "return_reverse"), None
         if edit:
@@ -497,6 +575,8 @@ class Session:
             t = self.target
             self._path_builder = (lambda st: initial_path(st.tcp, st.q_rad, t, self.cfg, allow_unsafe=self.allow_unsafe)) \
                 if t is not None else None
+            if self.stations and self.station_goal in ("B", "C"):
+                self._path_builder = self._station_build
             msg = "back at the start: edit the outbound path again"
         elif which == "edit_return" and self.return_edit is not None and self.outbound_exec is not None:
             ed, goal, phase, kind = self.return_edit, self.return_goal, "return", "return_edit"
@@ -749,6 +829,8 @@ class Session:
         report when the robot drifted (e.g. pushed in the viewer)."""
         self.poll()
         self._maybe_auto_run(d)
+        if self.stations:
+            self._at_base = self.at_base(d)
         if self.state == "PASSED" and self.report is not None:
             drift = float(np.max(np.abs(d.qpos[self.idx.qpos] - self.report.binding.start_q_rad)))
             if drift > self.cfg["validation"]["approval_q_drift_rad"]:
@@ -989,6 +1071,9 @@ class Session:
                "target": None if t is None else {"label": self.target_label, "r_m": round(float(t.r_m), 4),
                                                   "theta_deg": round(float(np.degrees(t.theta_rad)), 2)},
                "report": None, "last_run": None}
+        if self.stations:
+            out["stations"] = self.stations_status()
+            out["stations"]["at_base"] = self._at_base
         if self.real_arm is not None:
             arm = self.real_arm
             out["real_arm"] = {"up": arm.up, "state": arm.state.get("state"), "armed": arm.armed, "gate": arm.gate()}

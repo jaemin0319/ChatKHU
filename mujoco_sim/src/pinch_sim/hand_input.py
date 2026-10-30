@@ -257,7 +257,7 @@ class HandController:
             session._emit(f"no interior path point within {mouse_editor.radius:.0f} px of the pinch")
             return False
         self.grab3d = {"k": k, "p0": session.path.points_m[k].copy(), "h0": self.depth.out.copy(), "started": False,
-                       "lost_since": None}
+                       "lost_since": None, "z0": self.depth.z_m}
         return True
 
     def _move3d(self, mouse_editor, session, now: float) -> None:
@@ -293,6 +293,7 @@ class HandController:
             self._refuse(session, "depth_lost")
         elif g["started"]:
             session.edit_end()
+            _log_move(g, self.depth.z_m)
         else:
             session.point_select(g["k"])                   # pinched without moving: select it, like a click
 
@@ -367,12 +368,26 @@ class HandController:
         blit(img, spr, x, y)
 
 
+def _log_move(g, z1) -> None:
+    """Diagnosis of a kept 3-D pinch (2026-10-29): the hand's displacement in the calibration frame and as the user's
+    directions, and the fingers' optical depth before / after (Astra gives no depth closer than its min range)."""
+    from .canvas import world_to_cal
+    d = np.asarray(g.get("delta", np.zeros(3)), float)
+    dc = world_to_cal(d) - world_to_cal(np.zeros(3))
+    z0 = g.get("z0")
+    print(f"[hand] 3-D move kept: calibration frame dx {dc[0]*100:+.1f} dy {dc[1]*100:+.1f} dz {dc[2]*100:+.1f} cm "
+          f"(x = robot right, y = toward the paper, z = up) = {_delta_text(d)}; finger depth "
+          f"{'?' if z0 is None else f'{z0:.3f}'} -> {'?' if z1 is None else f'{z1:.3f}'} m", flush=True)
+
+
 def _delta_text(delta_world) -> str:
     """World displacement -> e.g. "위 2.3 · 오른쪽 1.0 cm" along the user's axes (largest first, >= 0.5 cm)."""
     from .canvas import user_axes
-    ax = user_axes(_USER_SIDE[0])
+    ax = dict(user_axes(_USER_SIDE[0]))
+    if _SWAP_LR[0]:                       # --swap-left-right: the same left / right as the voice directions
+        ax["right"], ax["left"] = ax["left"], ax["right"]
     parts = []
-    for pos, neg, key in (("위", "아래", "up"), ("오른쪽", "왼쪽", "right"), ("저쪽", "내 쪽", "away")):
+    for pos, neg, key in (("위", "아래", "up"), ("오른쪽", "왼쪽", "right"), ("뒤쪽", "앞쪽", "away")):
         c = float(np.dot(delta_world, ax[key])) * 100
         if abs(c) >= 0.5:
             parts.append((abs(c), f"{pos if c > 0 else neg} {abs(c):.1f}"))
@@ -380,6 +395,7 @@ def _delta_text(delta_world) -> str:
 
 
 _USER_SIDE = ["right"]      # set by the app from --user-side (for the displayed directions only)
+_SWAP_LR = [False]          # set by the app from --swap-left-right (displayed directions only)
 
 
 class HandCamera:

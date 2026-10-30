@@ -100,6 +100,45 @@ def initial_path(start: Pose, start_q, target, cfg: dict, allow_unsafe: bool = F
                          meta={"target": target.summary()})
 
 
+def straight_path(path_id: str, start: Pose, start_q, goal_p, cfg: dict, meta: dict | None = None,
+                  goal_axis=DOWN) -> CartesianPath:
+    """Current TCP -> goal in one straight segment (demo stations, stations.py): the user edits it from there."""
+    return waypoint_path(path_id, "initial", start, start_q, [(np.asarray(goal_p, float), goal_axis)], cfg,
+                         meta=dict(meta or {}, shape="straight"))
+
+
+def station_path(path_id: str, start: Pose, start_q, cruise_goal, dip_m: float, cfg: dict,
+                 meta: dict | None = None) -> CartesianPath:
+    """Demo stations: (rise to the cruise height if the robot is down at a station) -> straight to above the target
+    -> down dip_m and stay there. The straight part is what the user edits."""
+    cruise_goal = np.asarray(cruise_goal, float)
+    wps = []
+    start_low = bool(start.p_m[2] < cruise_goal[2] - 1e-3)
+    if start_low:
+        wps.append((np.array([start.p_m[0], start.p_m[1], cruise_goal[2]]), DOWN))
+    wps.append((cruise_goal, DOWN))
+    if dip_m > 0:
+        wps.append((cruise_goal - np.array([0.0, 0.0, dip_m]), DOWN))
+    return waypoint_path(path_id, "initial", start, start_q, wps, cfg,
+                         meta=dict(meta or {}, shape="straight", dip_m=float(dip_m), start_low=start_low))
+
+
+def lower_end(path: CartesianPath, dip_m: float, cfg: dict) -> CartesianPath:
+    """The path plus a vertical descent of dip_m at its end (the robot stays down there)."""
+    if dip_m <= 0:
+        return path
+    pc = cfg["path"]
+    end, axis = path.points_m[-1], path.tool_axis[-1]
+    low = end - np.array([0.0, 0.0, dip_m])
+    if low[2] < pc["tcp_z_min_m"]:
+        raise PathGenerationError(f"lowered end z {low[2]:.4f} m below tcp_z_min_m {pc['tcp_z_min_m']} m")
+    d, a = _segment(end, low, axis, axis, pc["ds_max_m"], pc["rot_equiv_length_m_per_rad"])
+    n0 = len(path.points_m)
+    P, A = np.vstack([path.points_m, d]), np.vstack([path.tool_axis, a])
+    wp = tuple(sorted({*path.waypoint_index, n0 - 1, len(P) - 1}))
+    return CartesianPath(path.path_id, path.source, path.frame, P, A, wp, path.start_q_rad.copy(), dict(path.meta))
+
+
 def return_path(start: Pose, start_q, ready: Pose, cfg: dict) -> CartesianPath:
     """Actual current TCP -> (vertical lift to approach height) -> ready TCP. One-way."""
     lift = max(cfg["target"]["approach_height_m"], 0.0)

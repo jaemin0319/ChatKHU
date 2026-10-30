@@ -1,5 +1,6 @@
 """config.yaml 읽기. 파일 안의 상대 경로는 설정 파일이 있는 폴더 기준이다."""
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,6 +33,7 @@ class Config:
     mute_mic_while_speaking: bool
     log_dir: Path
     answer_seconds: float = 20.0          # 앱의 질문에 호출어 없이 답할 수 있는 시간
+    wake_required: bool = True            # False = 호출어 없이 처음부터 모든 말을 듣는다
     listen_while_moving: bool = False     # 로봇이 움직이는 동안 AI가 말할 때도 마이크를 연다 (현장 확인 후에만 켠다)
 
     @property
@@ -66,7 +68,8 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
     return Config(
         wake_word=str(raw.get('wake_word', '쿠옹아')).strip(),
         wake_aliases=tuple(str(a).strip() for a in raw.get('wake_aliases') or ()),
-        wake_seconds=float(raw.get('wake_seconds', 30)),
+        wake_seconds=float(raw.get('wake_seconds', 30)) or math.inf,   # 0 = 닫지 않음
+        wake_required=bool(raw.get('wake_required', True)),
         wake_fuzzy=bool(raw.get('wake_fuzzy', True)),
         call_words=tuple(str(a).strip() for a in raw.get('call_words', ['야']) or ()),
         model=str(raw.get('model', 'gemini-3.8-live')).strip(),

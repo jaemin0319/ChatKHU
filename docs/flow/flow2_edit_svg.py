@@ -1,7 +1,7 @@
 """경로 수정 흐름도 (좌표를 직접 정해 그리는 SVG). 실행: python3 flow2_edit_svg.py → flow2_edit.svg"""
 from pathlib import Path
 
-W, H = 1560, 1550
+W, H = 1560, 1590
 FONT = "Noto Sans CJK KR"
 STYLE = {
     "main":  ("#E8F1FB", "#2B5797"),
@@ -58,13 +58,13 @@ VX, PX = 515, 1125                      # 말(왼쪽) / 핀치(오른쪽) 기둥
 BW = 390                                # 두 기둥 상자 너비
 line([(CX - 45, 81), (CX - 45, 98), (VX, 98), (VX, 100)], arrow=False)
 line([(CX + 45, 81), (CX + 45, 98), (PX, 98), (PX, 100)], arrow=False)
-pill(VX, 118, "점 가리키기·클릭 + 말로", 210)
+pill(VX, 118, "검지로 가리키기 + 말로", 200)
 pill(PX, 118, "핀치로", 70)
 line([(VX, 136), (VX, 156)])
 line([(PX, 136), (PX, 156)])
 
 # 말로 고치기 (왼쪽)
-box(VX, 195, BW, 78, ["사용자: 검지로 가리키거나 점을 클릭", "→ 노란 동그라미로 표시"], "voice")
+box(VX, 195, BW, 78, ["사용자: 경로 위 점을 검지로 0.4초 가리킴", "→ 노란 동그라미로 표시"], "voice")
 line([(VX, 234), (VX, 266)])
 box(VX, 305, BW, 78, ["② 사용자: 점을 보고 말함", "예: 쿠옹아, 여기 위로 조금 올려줘"], "voice")
 line([(VX, 344), (VX, 375)])
@@ -133,11 +133,11 @@ line([(RBUS, ROWS[1]), (RBUS, 800), (CX + 148, 800)], dashed=True)       # 오�
 label(LBUS + 8, ROWS[0] - 62, "③으로")
 label(RBUS - 8, ROWS[0] - 62, "③으로", "end")
 
-# 다른 점 클릭 → 클릭 상자 / 다른 점 핀치 → 핀치 상자
+# 다른 점 가리키기 → 가리키기 상자 / 다른 점 핀치 → 핀치 상자
 ROW4 = 1265
-line([(CX, ROW4), (437 + 56, ROW4)], arrow=False)
-pill(437, ROW4, "다른 점 클릭", 110)
-line([(437 - 55, ROW4), (30, ROW4), (30, 195), (VX - BW / 2, 195)])
+line([(CX, ROW4), (437 + 71, ROW4)], arrow=False)
+pill(437, ROW4, "다른 점 가리키기", 140)
+line([(437 - 70, ROW4), (30, ROW4), (30, 195), (VX - BW / 2, 195)])
 label(40, 178, "새 점으로 ②부터")
 line([(CX, ROW4), (1140 - 56, ROW4)], arrow=False)
 pill(1140, ROW4, "다른 점 핀치", 110)
@@ -147,14 +147,14 @@ label(1520, 178, "새 점을 핀치로", "end")
 # 수정 완료 → ④ (가운데 아래로 곧게)
 pill(CX, 1360, "이 경로로 할게 · 수정 완료", 230)
 line([(CX, 1378), (CX, 1400)])
-box(CX, 1435, 420, 66, ["④ 수정 끝 → 검증 시작", "(통과하면 묻지 않고 바로 이동 · 전체 흐름 ②로)"], "main", width=2.6)
+box(CX, 1435, 440, 66, ["④ 수정 끝 → 쿠옹이: 검증 후 이동할까요?", "(어 → 검증, 통과하면 이동 · 전체 흐름 ②로)"], "main", width=2.6)
 
 # ※ 조건 (왼쪽 아래)
 fill, stroke = STYLE["note"]
-out.append(f'<rect x="55" y="1345" width="470" height="180" rx="14" fill="{fill}" stroke="{stroke}"/>')
-for i, (t, b) in enumerate([("※ 정보가 충분한 조건", True), ("· 어디: 클릭한 점 (또는 시작·가운데·끝)", False),
+out.append(f'<rect x="55" y="1345" width="470" height="211" rx="14" fill="{fill}" stroke="{stroke}"/>')
+for i, (t, b) in enumerate([("※ 정보가 충분한 조건", True), ("· 어디: 검지로 가리킨 점 (또는 시작·가운데·끝)", False),
                             ("· 방향: 위·아래·왼쪽·오른쪽·내 쪽·저쪽", False), ("· 거리: 조금 2 · 보통 5 · 많이 8cm", False),
-                            ("(말하지 않으면 묻지 않고 조금)", False)]):
+                            ("(말하지 않으면 묻지 않고 조금)", False), ("· 호출어(쿠옹아)는 처음 한 번만", False)]):
     out.append(f'<text x="75" y="{1378 + i*31}" font-size="{17 if b else 16}" font-weight="{700 if b else 400}" '
                f'font-family="{FONT}" fill="#1a1a1a">{t}</text>')
 

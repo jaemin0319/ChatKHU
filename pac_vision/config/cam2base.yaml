@@ -1,30 +1,31 @@
 # 카메라 → base_ref 보정 결과 (calibrate.py가 생성). P_base = R @ P_cam + t, 단위 m.
-# 현장 값: 지금 시연 배치(2026-10-28 12:24 보정)의 결과라 저장소에 넣는다. 배치를 바꾸면 다시 보정한다. 형식은 cam2base.example.yaml.
-created: '2026-10-28T12:24:24'
+# 현장 전용 값이라 git에 올리지 않는다. 형식은 cam2base.example.yaml 참고.
+created: '2026-10-29T20:12:20'
 depth_mode: plane
 R:
-- [-0.4787928081695665, -0.37219527394907287, 0.7951277412435537]
-- [-0.8767931619097732, 0.24875436232893736, -0.41152766425914294]
-- [-0.04462284250653489, -0.8941990523772088, -0.44544007077758363]
-t: [-0.5772102786513136, 0.4191949099575514, 0.4728886847424951]
+- [-0.41644998798958593, -0.4926211918274682, 0.7641294189245422]
+- [-0.9091434992110284, 0.22079836109461815, -0.3531376241357711]
+- [0.005244553918162235, -0.8417674531011611, -0.5398148289495057]
+t: [-0.7708291720125555, 0.4641531673007483, 0.6354651479662495]
 checks:
-  base_error: {ok: true, value: 0.0029857712548092084, limit: 0.01, blocking: true}
-  a4_sides: {ok: true, value: 0.00275324150302797, limit: 0.005, blocking: true}
-  reflection: {ok: true, value: 0.4728886847424951, limit: 0.0, blocking: true}
-  a4_size: {ok: true, value: 71.61005684759935, limit: 40.0, blocking: false}
-  desk_z: {ok: false, value: 0.01213962790681443, limit: 0.01, blocking: false}
+  base_error: {ok: true, value: 0.003546637704213808, limit: 0.01, blocking: true}
+  a4_sides: {ok: true, value: 0.0024702274162055893, limit: 0.005197922535494142,
+    blocking: true}
+  reflection: {ok: true, value: 0.6354651479662495, limit: 0.0, blocking: true}
+  a4_size: {ok: true, value: 53.57110324047991, limit: 40.0, blocking: false}
+  desk_z: {ok: true, value: 0.006328272108314137, limit: 0.01, blocking: false}
 passed: true
-rms_m: 0.0016508173563556604
-holdout_m: 0.0029857712548092084
-sides_m: [0.10695093457237752, 0.1869256992318834, 0.10730327268570015, 0.18775324150302797]
-plane_rms_m: 0.0012742503053180976
-tilt_deg: 63.54850219702859
+rms_m: 0.0017081474304403539
+holdout_m: 0.003546637704213808
+sides_m: [0.1045203866467794, 0.186590766591444, 0.10636046071001017, 0.1874702274162056]
+plane_rms_m: 0.001383774675957749
+tilt_deg: 57.32896565896082
 desk_z:
-  near: {median: -6.0519000095154984e-05, p5: -0.001272617737450854, p95: 0.0013983631290757914,
-    n: 4106, raised: 0.0, n_outside: 0}
-  far: {median: 8.454044075428824e-06, p5: -0.0023786456521880522, p95: 0.01213962790681443,
-    n: 4106, raised: 0.061130053580126645, n_outside: 1800}
-session_file: data/sessions/2026-10-28_1224.npz
+  near: {median: -9.278707753329618e-05, p5: -0.0022082508945993396, p95: 0.002670048062331751,
+    n: 9964, raised: 0.017262143717382578, n_outside: 1541}
+  far: {median: 0.00017111390880653055, p5: -0.0022108822506917924, p95: 0.006328272108314137,
+    n: 9957, raised: 0.041679220648789796, n_outside: 746}
+session_file: data/sessions/2026-10-29_2012.npz
 camera:
   rotate_180: true
   openni: {redist: $PINCH_KHU_ROOT/vendor/ros2_astra_camera/astra_camera/openni2_redist/x64}
@@ -39,5 +40,5 @@ camera:
     dy: {a: -8.475, b: 0.0, c: 0.0, d: -0.0}
   ui: {font: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc, font_size: 16,
     axis_len_m: 0.1}
-camera_identity: {device: 2, name: 'Astra Pro FHD Camera: Astra Pro', by_path: 'pci-0000:00:14.0-usb-0:9.1.2:1.0-video-index0',
+camera_identity: {device: 2, name: 'Astra Pro FHD Camera: Astra Pro', by_path: 'pci-0000:00:14.0-usb-0:7.1.2:1.0-video-index0',
   by_id: usb-Sonix_Technology_Co.__Ltd._Astra_Pro_FHD_Camera_SN0001-video-index0}

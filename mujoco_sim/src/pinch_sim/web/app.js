@@ -88,6 +88,29 @@ video.addEventListener('contextmenu', (e) => {
   send({ type: 'mouse', kind: 'cancel', u: 0.5, v: 0.5 });
 });
 
+// ------------------------------------------------------------------ small 3-D simulator view: drag turns it
+const simImg = $('sim'), simView = $('simview');
+function startSim() { simImg.src = `/sim?t=${encodeURIComponent(token)}&r=${Date.now()}`; }
+simImg.addEventListener('error', () => setTimeout(startSim, 1000));
+let orbiting = false, orbitLast = null, orbitAcc = null;
+simView.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  orbiting = true; orbitLast = { x: e.clientX, y: e.clientY };
+  simView.setPointerCapture(e.pointerId);
+  simView.classList.add('dragging');
+});
+simView.addEventListener('pointermove', (e) => {
+  if (!orbiting) return;
+  const first = orbitAcc === null;
+  orbitAcc = orbitAcc || { dx: 0, dy: 0 };
+  orbitAcc.dx += e.clientX - orbitLast.x; orbitAcc.dy += e.clientY - orbitLast.y;
+  orbitLast = { x: e.clientX, y: e.clientY };
+  if (first) requestAnimationFrame(() => { act('orbit', orbitAcc); orbitAcc = null; });   // one message per frame
+});
+const endOrbit = () => { orbiting = false; simView.classList.remove('dragging'); };
+simView.addEventListener('pointerup', endOrbit);
+simView.addEventListener('pointercancel', endOrbit);
+
 function toggleFullscreen() {         // F / the rail button; Esc (the browser's own) goes back to the window
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   else document.documentElement.requestFullscreen().catch(() => {});
@@ -114,6 +137,7 @@ function setSidebar(open) {
 function setChat(open) {
   document.body.classList.toggle('chat-open', open);
   if (open) setSidebar(false);
+  renderSuggest();
 }
 const NAV_LABEL = { new: '새 대화', saved: '저장된 경로', recent: '최근 대화', settings: '설정' };
 document.querySelectorAll('[data-nav]').forEach((b) => b.addEventListener('click', () => {
@@ -128,7 +152,7 @@ $('chat-form').addEventListener('submit', (e) => {
   e.preventDefault();
   $('chat-text').value = '';
   $('chat-text').blur();
-  toastLocal('글자 입력은 준비 중이에요', '"쿠옹아"라고 부른 뒤 말로 해 주세요.', false);
+  toastLocal('글자 입력은 준비 중이에요', '말로 해 주세요.', false);
 });
 $('graph-btn').addEventListener('click', () => { graphOpen = !graphOpen; renderGraph(); });
 document.querySelectorAll('.step').forEach((b) => b.addEventListener('click', () => {
@@ -141,6 +165,7 @@ function render() {
   renderMenu();
   renderBadges();
   renderChat();
+  renderSuggest();
   renderGraph();
   renderActions();
   renderToasts();
@@ -180,10 +205,31 @@ function renderBadges() {
   if ($('badges').innerHTML !== h) $('badges').innerHTML = h;
 }
 
+function renderSuggest() {          // chat folded: what 쿠옹이 understands now ("국그릇으로 가자" ...)
+  const el = $('suggest');
+  const say = (S && S.suggest) || [];
+  const show = say.length > 0 && !document.body.classList.contains('chat-open');
+  el.classList.toggle('hidden', !show);
+  const sig = JSON.stringify(say);
+  if (!show || el.dataset.sig === sig) return;
+  el.dataset.sig = sig;
+  el.innerHTML = '';
+  const label = document.createElement('span');
+  label.className = 'say-label';
+  label.textContent = '이렇게 말해 보세요';
+  el.appendChild(label);
+  for (const t of say) {
+    const s = document.createElement('span');
+    s.className = 'say';
+    s.textContent = `"${t}"`;
+    el.appendChild(s);
+  }
+}
+
 function renderChat() {
   const list = $('chat-list');
   $('chat-intro').classList.toggle('hidden', S.chat.length > 0);
-  $('intro-status').textContent = S.voice ? "'쿠옹아'라고 불러 보세요" : '쿠옹이 연결 대기';
+  $('intro-status').textContent = S.voice ? '쿠옹이가 듣고 있어요' : '쿠옹이 연결 대기';
   let changed = false;
   for (const m of S.chat) {
     if (list.querySelector(`[data-id="${m.id}"]`)) continue;
@@ -401,6 +447,7 @@ setChat(!OPEN.includes('sidebar'));
 if (OPEN.includes('sidebar')) setSidebar(true);
 graphOpen = OPEN.includes('graph');
 startVideo();
+startSim();
 connect();
 function reportSize() { act('viewport', { w: innerWidth, h: innerHeight }); }   // logged by the app (window check)
 reportSize();

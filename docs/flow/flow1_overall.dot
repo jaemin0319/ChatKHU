@@ -2,18 +2,20 @@ digraph G {
   include_common
   graph [splines=ortho, nodesep=0.5, ranksep=0.45];
   start [label="화면에 가는 길 표시\n(1단계: 가는 길)"];
-  mode1 [label="사용자: 쿠옹아, 경로 수정할래 (또는 E 키)\n시뮬레이터 수정 모드 켜짐 → 쿠옹이: 네. 손가락으로\n경로를 수정해 주세요. (손 입력은 수정 모드에서만)"];
-  edit1 [label="① 사용자가 가는 길 수정\n검지로 점 가리키기 + 핀치로 3D 이동, 또는 말·마우스\n이전으로: 직전 수정 되돌리기 (자세한 흐름은 경로 수정 흐름도)"];
-  done1 [label="② 사용자: 이 경로로 할게 / 수정 완료\n쿠옹이: 검증할게요. 통과하면 바로 움직여요."];
+  mode1 [label="사용자: 쿠옹아, 경로 수정할래 (또는 E 키)\n호출어(쿠옹아)는 처음 한 번만 부르면 계속 들음\n수정 모드 켜짐 → 쿠옹이: 경로 수정 후 수정 완료를 말해 주세요."];
+  edit1 [label="① 사용자가 가는 길 수정\n검지로 점 가리키기 + 말로 고치기 또는 핀치로 3D 이동\n(자세한 흐름은 경로 수정 흐름도)"];
+  done1 [label="② 사용자: 수정 완료 / 이 경로로 할게\n쿠옹이: 검증 후 이동할까요?"];
+  q1 [label="사용자 답", style="rounded,dashed", fillcolor="white", color="#888888"];
+  w1 [label="쿠옹이: 네, 더 고친 뒤\n수정 완료라고 말씀해 주세요.\n→ ①로"];
   v1 [label="③ 검증 결과", style="rounded,dashed", fillcolor="white", color="#888888"];
-  f1 [label="쿠옹이: 검증을 통과하지 못했어요.\n예: 팔이 닿지 않는 곳이 있어요.\n실패한 곳을 빨간 점으로 표시하고 ①로 복귀"];
-  m1 [label="④ 쿠옹이: 검증을 통과했어요. 이동을 시작할게요.\n(다시 묻지 않음 · 그 검증된 경로로 시뮬레이터 자동 이동)\n가는 길로 이동 중"];
+  f1 [label="쿠옹이: 검증을 통과하지 못했어요.\n예: 팔이 닿지 않는 곳이 있어요.\n화면의 빨간 점을 보고 다시 고쳐 주세요. → ①로"];
+  m1 [label="④ 쿠옹이: 검증을 통과했어요. 이동을 시작할게요.\n가는 길로 이동 중\n(실물 연결 시 실물 팔도 같은 궤적·같은 시간표로 이동)"];
   ask1 [label="⑤ 쿠옹이: 목표에 도착했어요.\n돌아오는 길을 수정할까요,\n가던 길 그대로 반대로 돌아갈까요?"];
-  c1 [label="⑥ 사용자 선택\n(입력이 올 때까지 기다림)", style="rounded,dashed", fillcolor="white", color="#888888"];
+  c1 [label="⑥ 사용자 선택\n(아니 · 무응답: 네, 여기 있을게요. 기다림)", style="rounded,dashed", fillcolor="white", color="#888888"];
   rev [label="가던 길(고친 가는 길)을\n거꾸로 따라 이동 중", fillcolor="#EEEBFB", color="#5B4BB7"];
-  edit2 [label="2단계: 돌아오는 길 수정\n①과 같은 방식으로 고친 뒤 수정 완료 → 검증", fillcolor="#EEEBFB", color="#5B4BB7"];
+  edit2 [label="2단계: 돌아오는 길 수정\n①과 같은 방식으로 고친 뒤 수정 완료\n→ 검증 후 이동할까요? → 어 → 검증", fillcolor="#EEEBFB", color="#5B4BB7"];
   v2c [label="검증 결과", style="rounded,dashed", fillcolor="white", color="#888888"];
-  f2 [label="쿠옹이: 검증을 통과하지 못했어요.\n실패한 곳을 빨간 점으로 표시하고\n2단계로 복귀", fillcolor="#EEEBFB", color="#5B4BB7"];
+  f2 [label="쿠옹이: 검증을 통과하지 못했어요.\n화면의 빨간 점을 보고 다시 고쳐 주세요.\n→ 2단계로", fillcolor="#EEEBFB", color="#5B4BB7"];
   v2 [label="쿠옹이: 검증을 통과했어요. 이동을 시작할게요.\n고친 돌아오는 길로 이동 중", fillcolor="#EEEBFB", color="#5B4BB7"];
   ask2 [label="⑦ 쿠옹이: 처음 자리로 돌아왔어요.\n새 목표로 다시 해 볼까요?"];
   c2 [label="⑧ 사용자 선택", style="rounded,dashed", fillcolor="white", color="#888888"];
@@ -21,25 +23,29 @@ digraph G {
   save [label="경로 저장하기\n고친 가는 길·돌아오는 길을 파일로 저장\n쿠옹이: 경로를 저장했어요.", fillcolor="#E6F4EE", color="#2E7D5B"];
 
   node [fillcolor="#FDF0E6", color="#C0661A"];
-  sA [label="즉시 정지 · 쿠옹이: 멈췄어요.\n계속 가 · 돌아가 외의 말이나 무응답:\n멈춘 채 대기 (5초 뒤 한 번 다시 물음)"];
-  bA [label="출발 자리로 돌아옴\n→ ①로 (고친 내용 유지,\n수정 완료라고 하면 다시 검증)"];
-  sB [label="즉시 정지 · 쿠옹이: 멈췄어요.\n계속 가 · 돌아가 외의 말이나 무응답:\n멈춘 채 대기 (5초 뒤 한 번 다시 물음)"];
+  sA [label="즉시 정지 · 쿠옹이: 멈췄어요.\n5초 동안 말이 없으면: 계속 갈까요, 돌아갈까요?\n아니 · 무응답: 네, 멈춰 있을게요. (대기)"];
+  bA [label="시작한 자리로 돌아옴 · 쿠옹이: 경로를 더 고치거나\n수정 완료라고 말씀해 주세요.\n→ ①로 (고친 내용 유지)"];
+  sB [label="즉시 정지 · 쿠옹이: 멈췄어요.\n5초 동안 말이 없으면: 계속 갈까요, 돌아갈까요?\n아니 · 무응답: 네, 멈춰 있을게요. (대기)"];
   bB [label="목표 자리로 돌아옴\n→ ⑤ 다시 물음"];
-  sC [label="즉시 정지 · 쿠옹이: 멈췄어요.\n계속 가 · 돌아가 외의 말이나 무응답:\n멈춘 채 대기 (5초 뒤 한 번 다시 물음)"];
-  bC [label="목표 자리로 돌아옴\n→ 2단계 수정으로 (고친 내용 유지)"];
+  sC [label="즉시 정지 · 쿠옹이: 멈췄어요.\n5초 동안 말이 없으면: 계속 갈까요, 돌아갈까요?\n아니 · 무응답: 네, 멈춰 있을게요. (대기)"];
+  bC [label="목표 자리로 돌아옴 · 쿠옹이: 경로를 더 고치거나\n수정 완료라고 말씀해 주세요.\n→ 2단계로 (고친 내용 유지)"];
 
   node [style="rounded,filled", fillcolor="#F2F0EA", color="#9A968C", fontsize=13, margin="0.15,0.06", penwidth=1];
   p_fail [label="실패"]; p_pass [label="통과"]; p_fail2 [label="실패"]; p_pass2 [label="통과"];
   p_a1 [label="도착"]; p_a2 [label="도착"]; p_a3 [label="도착"];
   p_rev [label="반대로 돌아가"]; p_edit [label="수정할래"];
   p_yes [label="응"]; p_no [label="아니"];
+  p_go [label="어 · 응"]; p_more [label="아니 · 더 고칠래"];
   node [fillcolor="#FBE3D0", color="#C0661A"];
   p_s1 [label="멈춰"]; p_s2 [label="멈춰"]; p_s3 [label="멈춰"];
   aF [label="계속 가"]; aB [label="돌아가"];
   bF [label="계속 가"]; bBk [label="돌아가"];
   cF [label="계속 가"]; cBk [label="돌아가"];
 
-  start -> mode1 -> edit1 -> done1 -> v1;
+  start -> mode1 -> edit1 -> done1 -> q1;
+  q1 -> p_go [arrowhead=none]; p_go -> v1;
+  q1 -> p_more [arrowhead=none]; p_more -> w1;
+  w1 -> edit1 [style=dashed, constraint=false];
   v1 -> p_pass [arrowhead=none]; p_pass -> m1;
   v1 -> p_fail [arrowhead=none]; p_fail -> f1;
   f1 -> edit1 [style=dashed];
@@ -76,5 +82,6 @@ digraph G {
   {rank=same; p_a1; p_s1}
   {rank=same; p_a2; p_s2; p_a3; p_s3}
   {rank=same; p_pass -> p_fail [style=invis]}
+  {rank=same; p_go -> p_more [style=invis]}
   {rank=same; p_fail2 -> p_pass2 [style=invis]}
 }
