@@ -13,9 +13,10 @@ mujoco_sim/logs/
 mujoco_sim/saved_paths/
 mujoco_sim/.cache/
 mujoco_sim/.tmp/
-# 비밀 설정. ChatKHU 키만 예외로 voice/chatkhu_key.env에 올린다 (2026-10-28 저장소 주인 결정, 비공개 저장소)
+# 비밀 설정. ChatKHU 키도 올리지 않는다 (2026-10-30 공개 전환 준비로 voice/chatkhu_key.env를 저장소에서 뺌)
 .env
 .env.*
+*.env
 !.env.example
 *.key
 # 녹음·로그 (사용자 목소리·대화가 들어 있을 수 있다)

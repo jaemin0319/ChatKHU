@@ -11,7 +11,7 @@
 #   .venv-voice                   음성(쿠옹이)
 #   manipulator_control_ws/.venv  실물 팔 제어
 #   vendor/ros2_astra_camera      Orbbec OpenNI2 redist (빌드하지 않고 .so만 쓴다)
-# ChatKHU 키는 저장소의 voice/chatkhu_key.env (개인 파일 ~/.config/pinch_khu/env가 있으면 그쪽이 먼저)
+# ChatKHU 키는 개인 파일 ~/.config/pinch_khu/env (없으면 git에서 제외된 voice/chatkhu_key.env)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -114,9 +114,9 @@ repo_key="$ROOT/voice/chatkhu_key.env"
 chmod 600 "$repo_key" 2>/dev/null || true          # git은 권한 600을 기억하지 않는다
 if [ -f "$envf" ] && grep '^BAZE_API_KEY=.\+' "$envf" >/dev/null; then
   chmod 600 "$envf"
-  echo "  개인 키 파일을 써요: $envf (저장소 키보다 먼저)"
+  echo "  개인 키 파일을 써요: $envf (voice/chatkhu_key.env보다 먼저)"
 elif [ -f "$repo_key" ] && grep '^BAZE_API_KEY=.\+' "$repo_key" >/dev/null; then
-  echo "  저장소의 키를 써요: voice/chatkhu_key.env"
+  echo "  로컬 키 파일을 써요: voice/chatkhu_key.env (git 제외)"
 else
   echo "  키 없음: voice/chatkhu_key.env 또는 $envf 에 BAZE_API_KEY=... 한 줄 (없으면 음성 대신 키보드·마우스·버튼으로 시연)"
 fi

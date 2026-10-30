@@ -19,8 +19,8 @@
 ## 1. 저장소
 
 ```bash
-git clone https://github.com/jaemin0319/26_project_manipulator.git      # 비공개: gh auth login 먼저. --depth를 쓰지 않는다
-cd 26_project_manipulator
+git clone https://github.com/jaemin0319/ChatKHU.git      # --depth를 쓰지 않는다
+cd ChatKHU
 ```
 
 - 어느 폴더에 받아도 된다. 저장소 안의 모든 경로는 저장소 기준이다(실물 제어 `manipulator_control_ws/`, Astra 드라이버 `vendor/`).
@@ -94,14 +94,14 @@ python3 -m venv .venv && source scripts/env.sh
 pip install -r requirements.lock && python -m pytest -q   # 152 passed (가짜 서보)
 ```
 
-ChatKHU 키는 2026-10-28 저장소 주인 결정으로 저장소의 `voice/chatkhu_key.env`에 있다(비공개 저장소). 다른 키를 쓰려면 개인 파일에 넣는다. 개인 파일이 있으면 그쪽이 먼저다(값을 터미널 기록에 남기지 않도록 편집기로 넣는다):
+ChatKHU 키는 저장소에 넣지 않는다(2026-10-30 공개 전환 준비로 `voice/chatkhu_key.env`를 저장소에서 뺌). 개인 파일에 넣는다(값을 터미널 기록에 남기지 않도록 편집기로 넣는다):
 
 ```bash
 mkdir -p ~/.config/pinch_khu && install -m 600 /dev/null ~/.config/pinch_khu/env
 nano ~/.config/pinch_khu/env          # 한 줄: BAZE_API_KEY=발급받은_키
 ```
 
-`source voice/env.sh`가 개인 파일 → 저장소 파일 순서로 읽는다(개인 파일 권한이 600이 아니면 경고). 키가 없으면 쿠옹이는 `환경변수 BAZE_API_KEY가 비어 있습니다`로 멈추고 키 값은 출력하지 않는다.
+`source voice/env.sh`가 개인 파일 → `voice/chatkhu_key.env`(있으면, git 제외) 순서로 읽는다(개인 파일 권한이 600이 아니면 경고). 키가 없으면 쿠옹이는 `환경변수 BAZE_API_KEY가 비어 있습니다`로 멈추고 키 값은 출력하지 않는다.
 
 마이크 입력 크기를 확인한다 (키 없이, 소리는 저장하지 않음):
 
@@ -377,7 +377,7 @@ python -m voice.sim_dryrun        # 한 줄에 하나: start_edit / move_region 
 
 ## 11. git에 올리지 않는 것
 
-개인 키 파일(`~/.config/pinch_khu/env`, 저장소 밖 — 저장소 키 `voice/chatkhu_key.env`는 올린다), 보정 원자료와 확인 결과(`pac_vision/data/sessions/`, `markers.check.yaml`, `*.bak` — 카메라 영상·장치 번호), 실물 서보 보정(`manipulator_control_ws/runtime/` — 12 V를 껐다 켜면 무효라 컴퓨터마다 `calibrate`), 실행 기록(`mujoco_sim/logs/`, `voice/logs/` — 대화 내용 포함, `manipulator_control_ws/logs/`), 저장 경로(`mujoco_sim/saved_paths/`), 가상환경, `vendor/`(setup.sh가 받음). 커밋 전 `git status`로 확인한다.
+개인 키 파일(`~/.config/pinch_khu/env`, 저장소 밖 — `voice/chatkhu_key.env`도 올리지 않는다), 보정 원자료와 확인 결과(`pac_vision/data/sessions/`, `markers.check.yaml`, `*.bak` — 카메라 영상·장치 번호), 실물 서보 보정(`manipulator_control_ws/runtime/` — 12 V를 껐다 켜면 무효라 컴퓨터마다 `calibrate`), 실행 기록(`mujoco_sim/logs/`, `voice/logs/` — 대화 내용 포함, `manipulator_control_ws/logs/`), 저장 경로(`mujoco_sim/saved_paths/`), 가상환경, `vendor/`(setup.sh가 받음). 커밋 전 `git status`로 확인한다.
 
 지금 시연 배치의 현장 값(`pac_vision/config/{cam2base,pose,markers,robot_pose,local}.yaml`)은 2026-10-28부터 **올린다**(맨 위 참고).
 
